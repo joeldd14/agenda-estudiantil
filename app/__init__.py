@@ -1,6 +1,7 @@
-from flask import Flask
+from flask import Flask, send_from_directory
 from flask_cors import CORS
 from .database import db
+import os
 
 def create_app():
     #Crea la instancia de Flask
@@ -34,6 +35,18 @@ def create_app():
     app.register_blueprint(timetable_bp)
     app.register_blueprint(grades_bp)
     app.register_blueprint(settings_bp)
+    
+    @app.route("/")
+    def index():
+    # Sirve el index.html desde la carpeta frontend/
+        frontend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
+        return send_from_directory(frontend_path, "index.html")
+
+    @app.route("/<path:filename>")
+    def frontend_files(filename):
+        # Sirve cualquier otro fichero del frontend (api.js, App.jsx...)
+        frontend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
+        return send_from_directory(frontend_path, filename)
     
     # Crea todas las tablas en la base de datos si no existen
     with app.app_context():

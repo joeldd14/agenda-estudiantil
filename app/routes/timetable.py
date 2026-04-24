@@ -4,85 +4,79 @@ from ..models import TimetableClass, CancelledClass
 
 timetable_bp = Blueprint("timetable", __name__, url_prefix="/api/timetable")
 
-# -- GET /api/timetable -------------------------
+
+# ── GET /api/timetable/ ──────────────────────────────────
 @timetable_bp.route("/", methods=["GET"])
 def get_timetable():
     classes = TimetableClass.query.all()
     return jsonify([c.to_dict() for c in classes])
 
 
-# -- POST /api/timetable ------------------------
+# ── POST /api/timetable/ ─────────────────────────────────
 @timetable_bp.route("/", methods=["POST"])
-def create_timetable_entry():
+def create_class():
     data = request.get_json()
+    if not data or not data.get("subject"):
+        return jsonify({"error": "La asignatura es obligatoria"}), 400
 
-    if not data or not data.get("subject") or not data.get("day"):
-        return jsonify({"error": "La asignatura y el día son obligatorios"}), 400
-
-    clss = TimetableEntry(
-        subject=data.get("subject"),
-        day=data.get("day"), # "monday", "tuesday", ...
-        type=data.get("type"), # "class", "exam", "free"
+    cls = TimetableClass(
+        subject=data["subject"],
+        day_of_week=data.get("dayOfWeek", 0),
+        start_time=data.get("startTime", "09:00"),
+        end_time=data.get("endTime", "10:00"),
+        type=data.get("type", "teoria"),
         building=data.get("building"),
         room=data.get("room"),
-        time_start=data.get("time_start"),
-        time_end=data.get("time_end")
     )
-
-    db.session.add(clss)
+    db.session.add(cls)
     db.session.commit()
+    return jsonify(cls.to_dict()), 201
 
-    return jsonify(clss.to_dict()), 201
 
-
-# -- DELETE /api/timetable/<id> -------------------
-@timetable_bp.route("/<int:entry_id>", methods=["DELETE"])
-def delete_timetable_entry(entry_id):
-    clss = TimetableEntry.query.get_or_404(class_id)
-    #Borramos también las cancelaciones de esta clase
-    CancelledClass.query.filter_by(class_id=class_id).delete()
-    db.session.delete(clss)
-    db.session.commit()
-    return jsonify({"message": "Clase eliminada correctamente"})
-
-# -- GET /api/timetable/canceled ------------------------
-# Devuelve todas las cancelaciones como diccionario {class_id_fecha: True}
-@timetable_bp.route("/canceled", methods=["GET"])
-def get_canceled_classes():
+# ── GET /api/timetable/cancelled ─────────────────────────
+# OJO: esta ruta va ANTES que /<int:class_id>
+@timetable_bp.route("/cancelled", methods=["GET"])
+def get_cancelled():
     cancelled = CancelledClass.query.all()
     result = {}
     for c in cancelled:
         key = f"{c.class_id}_{c.date}"
-        result[key] = True #Para saber si esa clase esta cancelada
+        result[key] = True
     return jsonify(result)
 
-# -- POST /api/timetable/cancel ------------------------
-# Activa o desactiva la cancelación de una clase en un día 
-@timetable_bp.route("/cancel", methods=["POST"])
-def cancel_class():
+
+# ── POST /api/timetable/cancelled/toggle ─────────────────
+@timetable_bp.route("/cancelled/toggle", methods=["POST"])
+def toggle_cancelled():
     data = request.get_json()
-    class_id = data.get("class_id")
+    class_id = data.get("classId")
     date = data.get("date")
+
     if not class_id or not date:
-        return jsonify({"error": "La clase y la fecha son obligatorias"}), 400
-    
-    #Buscamos si ya existe una cancelación para ese día
+        return jsonify({"error": "classId y date son obligatorios"}), 400
+
     existing = CancelledClass.query.filter_by(
-        class_id = class_id,
-        date = date
+        class_id=class_id,
+        date=date
     ).first()
-    
-    if existing: 
-        #Si existe -> la eliminamos (toggle off)
+
+    if existing:
         db.session.delete(existing)
         db.session.commit()
         return jsonify({"cancelled": False})
-    else :
-        #Si no existe -> la creamos (toggle on)
-        cancelled = CancelledClass(
-            class_id = class_id,
-            date = date
-        )
+    else:
+        cancelled = CancelledClass(class_id=class_id, date=date)
         db.session.add(cancelled)
         db.session.commit()
         return jsonify({"cancelled": True})
+
+
+# ── DELETE /api/timetable/<id> ───────────────────────────
+# OJO: esta ruta va DESPUÉS de /cancelled y /cancelled/toggle
+@timetable_bp.route("/<int:class_id>", methods=["DELETE"])
+def delete_class(class_id):
+    cls = TimetableClass.query.get_or_404(class_id)
+    CancelledClass.query.filter_by(class_id=class_id).delete()
+    db.session.delete(cls)
+    db.session.commit()
+    return jsonify({"message": "Clase eliminada"}), 200

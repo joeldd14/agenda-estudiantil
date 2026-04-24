@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agenda Estudiantil</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #f5f6fa; font-family: system-ui, sans-serif; }
+    #root { min-height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // ── API ──────────────────────────────────────────────
+    const BASE_URL = "http://127.0.0.1:5000/api";
+    async function request(endpoint, method = "GET", body = null) {
+      const options = { method, headers: { "Content-Type": "application/json" } };
+      if (body) options.body = JSON.stringify(body);
+      const response = await fetch(`${BASE_URL}${endpoint}`, options);
+      if (!response.ok) throw new Error(`Error ${response.status}`);
+      return response.json();
+    }
+    const API = {
+      getTasks: () => request("/tasks/"),
+      createTask: (d) => request("/tasks/", "POST", d),
+      updateTask: (id, d) => request(`/tasks/${id}`, "PUT", d),
+      deleteTask: (id) => request(`/tasks/${id}`, "DELETE"),
+      getExams: () => request("/exams/"),
+      createExam: (d) => request("/exams/", "POST", d),
+      updateExam: (id, d) => request(`/exams/${id}`, "PUT", d),
+      deleteExam: (id) => request(`/exams/${id}`, "DELETE"),
+      getTimetable: () => request("/timetable/"),
+      createClass: (d) => request("/timetable/", "POST", d),
+      deleteClass: (id) => request(`/timetable/${id}`, "DELETE"),
+      getCancelled: () => request("/timetable/cancelled"),
+      toggleCancelled: (cid, date) => request("/timetable/cancelled/toggle", "POST", { classId: cid, date }),
+      getGradeConfigs: () => request("/grades/config"),
+      saveGradeConfig: (sk, comps) => request("/grades/config", "POST", { subjectKey: sk, components: comps }),
+      getGradeValues: () => request("/grades/values"),
+      saveGradeValue: (sk, cid, val) => request("/grades/values", "POST", { subjectKey: sk, configId: cid, value: val }),
+      getSettings: () => request("/settings/"),
+      updateSettings: (d) => request("/settings/", "PUT", d),
+      getNotes: () => request("/settings/notes"),
+      saveNote: (date, content) => request(`/settings/notes/${date}`, "PUT", { content }),
+      getFlags: () => request("/settings/flags"),
+      saveFlag: (date, d) => request(`/settings/flags/${date}`, "PUT", d),
+    };
+
+    // ── CONSTANTES ───────────────────────────────────────
+    const DEFAULT_CATS=[{id:"trabajo",label:"Trabajo",color:"#185FA5"},{id:"personal",label:"Personal",color:"#0F6E56"},{id:"salud",label:"Salud",color:"#993556"},{id:"futbol",label:"Fútbol",color:"#15803d"},{id:"otro",label:"Otro",color:"#5F5E5A"}];
+    const DEFAULT_SUBJECTS=[{id:"calc",label:"Cálculo",color:"#7c3aed"},{id:"prog",label:"Programación",color:"#0f766e"},{id:"redes",label:"Redes",color:"#c2410c"},{id:"so",label:"Sistemas Op.",color:"#15803d"}];
+    const ACCENTS=["#185FA5","#4f46e5","#7c3aed","#be185d","#0f766e","#15803d","#c2410c","#b45309"];
+    const FONT_SIZES=[{label:"Pequeño",value:13},{label:"Normal",value:15},{label:"Grande",value:17}];
+    const PRIORITIES=[{id:"none",label:"Sin prioridad",color:null},{id:"high",label:"Alta",color:"#c2410c"},{id:"vhigh",label:"Muy alta",color:"#991b1b"}];
+    const RECUR=[{id:"none",label:"Sin repetición"},{id:"daily",label:"Diaria"},{id:"weekly",label:"Semanal"}];
+    const EXAM_TYPES=[{id:"parcial",label:"Parcial"},{id:"recuperacion",label:"Recuperación"},{id:"test",label:"Test"},{id:"laboratorio",label:"Laboratorio"},{id:"trabajo",label:"Trabajo"},{id:"presentacion",label:"Presentación"}];
+    const CLASS_TYPES=[{id:"teoria",label:"Teoría",icon:"📖"},{id:"laboratorio",label:"Laboratorio",icon:"🔬"},{id:"seminario",label:"Seminario",icon:"💬"},{id:"otro",label:"Otro",icon:"📌"}];
+    const DAY_NAMES_S=["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
+    const DAY_NAMES_F=["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"];
+    const MONTH_NAMES=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+    const MESES_ES=["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+    const DIAS_ES=["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];
+    const EMPTY_FORM={title:"",desc:"",cat:"",subject:"",deadline:"",note:"",recur:"none",priority:"none",timeStart:"",timeEnd:""};
+    const EMPTY_EXAM={subject:"",date:"",type:"parcial",building:"",room:"",minGrade:"5",notes:"",timeStart:"",timeEnd:""};
+    const EMPTY_CLASS={subject:"",dayOfWeek:0,startTime:"09:00",endTime:"10:00",type:"teoria",building:"",room:""};
+
+    // ── HELPERS ──────────────────────────────────────────
+    const todayStr=()=>new Date().toISOString().slice(0,10);
+    const fmt=d=>{const[y,m,day]=d.split("-");return`${day}/${m}/${y}`;};
+    const fmtShort=d=>{try{const[,m,day]=d.split("-");return`${parseInt(day)} ${["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"][parseInt(m)-1]}`;}catch{return d;}};
+    const fmtFull=d=>{try{const[y,m,day]=d.split("-").map(Number);const dt=new Date(Date.UTC(y,m-1,day));return`${DIAS_ES[dt.getUTCDay()]} ${day} de ${MESES_ES[m-1]} de ${y}`;}catch{return d;}};
+    const daysUntil=d=>{try{return Math.ceil((new Date(d+"T00:00:00")-new Date(todayStr()+"T00:00:00"))/(864e5));}catch{return 0;}};
+    const dowUtc=d=>{try{const[y,m,day]=d.split("-").map(Number);return(new Date(Date.UTC(y,m-1,day)).getUTCDay()+6)%7;}catch{return 0;}};
+    const hexToRgb=hex=>{const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);return`${r},${g},${b}`;};
+    const lighten=(hex,amt=0.85)=>{if(!hex||hex.length<7)return"#eee";const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);const mix=c=>Math.round(c+(255-c)*amt);return`#${mix(r).toString(16).padStart(2,"0")}${mix(g).toString(16).padStart(2,"0")}${mix(b).toString(16).padStart(2,"0")}`;};
+    const gradeColor=(g,min)=>{if(g===""||g===null||g===undefined)return null;const n=parseFloat(g),m=parseFloat(min||5);return n>=m?"#0F6E56":n>=m*0.9?"#b45309":"#991b1b";};
+    const weekDays=base=>{try{const[y,m,day]=base.split("-").map(Number);const d=new Date(Date.UTC(y,m-1,day)),dow=dowUtc(base);return Array.from({length:7},(_,i)=>{const x=new Date(d);x.setUTCDate(d.getUTCDate()-dow+i);return x.toISOString().slice(0,10);});}catch{return Array(7).fill(todayStr());}};
+    const monthDays=base=>{try{const[y,m]=base.split("-").map(Number);const first=new Date(Date.UTC(y,m-1,1)),last=new Date(Date.UTC(y,m,0)),startDow=(first.getUTCDay()+6)%7,days=[];for(let i=0;i<startDow;i++){const x=new Date(Date.UTC(y,m-1,1-startDow+i));days.push({date:x.toISOString().slice(0,10),cur:false});}for(let i=1;i<=last.getUTCDate();i++)days.push({date:new Date(Date.UTC(y,m-1,i)).toISOString().slice(0,10),cur:true});while(days.length%7!==0){const x=new Date(Date.UTC(y,m,days.length-last.getUTCDate()-startDow+1));days.push({date:x.toISOString().slice(0,10),cur:false});}return days;}catch{return[];}};
+    const expandTasks=(tasks,from,to)=>{const r=[];tasks.forEach(t=>{if(!t.recur||t.recur==="none"){if((!from||t.date>=from)&&(!to||t.date<=to))r.push(t);}else{const end=new Date((to||t.date)+"T00:00:00"),cur=new Date(t.date+"T00:00:00");while(cur<=end){const ds=cur.toISOString().slice(0,10);if(!from||ds>=from)r.push({...t,date:ds,_recurring:true});if(t.recur==="daily")cur.setDate(cur.getDate()+1);else if(t.recur==="weekly")cur.setDate(cur.getDate()+7);else break;}}});return r;};
+
+    // ── APP ──────────────────────────────────────────────
+    function App(){
+      const[view,setView]=useState("day");
+      const[selDate,setSelDate]=useState(todayStr());
+      const[tasks,setTasks]=useState([]);
+      const[exams,setExams]=useState([]);
+      const[notes,setNotes]=useState({});
+      const[importantDays,setImportantDays]=useState({});
+      const[holidayDays,setHolidayDays]=useState({});
+      const[cancelledClasses,setCancelledClasses]=useState({});
+      const[timetable,setTimetable]=useState([]);
+      const[timetableEnd,setTimetableEnd]=useState("");
+      const[gradeConfigs,setGradeConfigs]=useState({});
+      const[gradeValues,setGradeValues]=useState({});
+      const[examGrades,setExamGrades]=useState({});
+      const[showForm,setShowForm]=useState(false);
+      const[showExamForm,setShowExamForm]=useState(false);
+      const[editingExamId,setEditingExamId]=useState(null);
+      const[showTimetableForm,setShowTimetableForm]=useState(false);
+      const[form,setForm]=useState(EMPTY_FORM);
+      const[editingTaskId,setEditingTaskId]=useState(null);
+      const[examForm,setExamForm]=useState(EMPTY_EXAM);
+      const[classForm,setClassForm]=useState(EMPTY_CLASS);
+      const[loaded,setLoaded]=useState(false);
+      const[catFilter,setCatFilter]=useState("todos");
+      const[subjectFilter,setSubjectFilter]=useState("todas");
+      const[search,setSearch]=useState("");
+      const[showSearch,setShowSearch]=useState(false);
+      const[dragId,setDragId]=useState(null);
+      const[dragOver,setDragOver]=useState(null);
+      const[dark,setDark]=useState(false);
+      const[showSettings,setShowSettings]=useState(false);
+      const[accent,setAccent]=useState("#185FA5");
+      const[cats,setCats]=useState(DEFAULT_CATS);
+      const[subjects,setSubjects]=useState(DEFAULT_SUBJECTS);
+      const[fontSize,setFontSize]=useState(14);
+      const[gradeConfigEditing,setGradeConfigEditing]=useState({});
+      const[localGradeCfgs,setLocalGradeCfgs]=useState({});
+      const[newComps,setNewComps]=useState({});
+      const[examGradeEditing,setExamGradeEditing]=useState({});
+      const[error,setError]=useState(null);
+      const searchRef=useRef();
+
+      useEffect(()=>{
+        (async()=>{
+          try{
+            const[tasksData,examsData,settingsData,notesData,flagsData,timetableData,cancelledData,gradeConfigsData,gradeValuesData]=await Promise.all([
+              API.getTasks(),API.getExams(),API.getSettings(),API.getNotes(),API.getFlags(),
+              API.getTimetable(),API.getCancelled(),API.getGradeConfigs(),API.getGradeValues(),
+            ]);
+            setTasks(tasksData);
+            setExams(examsData);
+            const eg={};examsData.forEach(e=>{if(e.grades?.length)eg[e.id]=e.grades;});setExamGrades(eg);
+            if(settingsData.cats?.length)setCats(settingsData.cats);
+            if(settingsData.subjects?.length)setSubjects(settingsData.subjects);
+            if(settingsData.accent)setAccent(settingsData.accent);
+            if(settingsData.dark!==undefined)setDark(settingsData.dark);
+            if(settingsData.fontSize)setFontSize(settingsData.fontSize);
+            if(settingsData.timetableEnd)setTimetableEnd(settingsData.timetableEnd);
+            setNotes(notesData);
+            setImportantDays(flagsData.importantDays||{});
+            setHolidayDays(flagsData.holidayDays||{});
+            setTimetable(timetableData);
+            setCancelledClasses(cancelledData);
+            setGradeConfigs(gradeConfigsData);
+            setGradeValues(gradeValuesData);
+            setLoaded(true);
+          }catch(e){
+            setError("No se puede conectar con el servidor. ¿Está Flask corriendo?");
+            console.error(e);
+          }
+        })();
+      },[]);
+
+      const getCat=id=>cats.find(c=>c.id===id);
+      const getSub=id=>subjects.find(s=>s.id===id);
+
+      const openNewTask=()=>{setEditingTaskId(null);setForm({...EMPTY_FORM,cat:cats[0]?.id||""});setShowForm(true);};
+      const openEditTask=t=>{setEditingTaskId(t.id);setForm({title:t.title||"",desc:t.desc||"",cat:t.cat||"",subject:t.subject||"",deadline:t.deadline||"",note:t.note||"",recur:t.recur||"none",priority:t.priority||"none",timeStart:t.timeStart||"",timeEnd:t.timeEnd||""});setShowForm(true);};
+      const saveTask=async()=>{if(!form.title.trim())return;try{if(editingTaskId){const u=await API.updateTask(editingTaskId,form);setTasks(tasks.map(t=>t.id===editingTaskId?u:t));}else{const c=await API.createTask({...form,date:selDate});setTasks([...tasks,c]);}setForm(EMPTY_FORM);setEditingTaskId(null);setShowForm(false);}catch(e){setError("Error guardando tarea");}};
+      const toggle=async id=>{const t=tasks.find(t=>t.id===id);if(!t)return;try{const u=await API.updateTask(id,{done:!t.done});setTasks(tasks.map(t=>t.id===id?u:t));}catch(e){setError("Error actualizando tarea");}};
+      const del=async id=>{try{await API.deleteTask(id);setTasks(tasks.filter(t=>t.id!==id));}catch(e){setError("Error eliminando tarea");}};
+      const moveTask=async(id,nd)=>{try{const u=await API.updateTask(id,{date:nd});setTasks(tasks.map(t=>t.id===id?u:t));}catch(e){setError("Error moviendo tarea");}};
+
+      const openNewExam=()=>{setEditingExamId(null);setExamForm(EMPTY_EXAM);setShowExamForm(true);};
+      const openEditExam=e=>{setEditingExamId(e.id);setExamForm({subject:e.subject||"",date:e.date||"",type:e.type||"parcial",building:e.building||"",room:e.room||"",minGrade:e.minGrade||"5",notes:e.notes||"",timeStart:e.timeStart||"",timeEnd:e.timeEnd||""});setShowExamForm(true);};
+      const saveExam=async()=>{if(!examForm.subject||!examForm.date)return;try{if(editingExamId){const u=await API.updateExam(editingExamId,{...examForm,grades:examGrades[editingExamId]||[]});setExams(exams.map(e=>e.id===editingExamId?u:e));}else{const c=await API.createExam(examForm);setExams([...exams,c]);}setExamForm(EMPTY_EXAM);setEditingExamId(null);setShowExamForm(false);}catch(e){setError("Error guardando examen");}};
+      const delExam=async id=>{try{await API.deleteExam(id);setExams(exams.filter(e=>e.id!==id));}catch(e){setError("Error eliminando examen");}};
+
+      const getExamGrades=id=>examGrades[id]||[];
+      const setExamGradeList=(id,list)=>setExamGrades(p=>({...p,[id]:list}));
+      const addExamGradeRow=id=>setExamGradeList(id,[...getExamGrades(id),{id:"eg_"+Date.now(),label:"",value:""}]);
+      const updateExamGrade=(eid,rid,field,val)=>setExamGradeList(eid,getExamGrades(eid).map(r=>r.id===rid?{...r,[field]:val}:r));
+      const delExamGradeRow=(eid,rid)=>setExamGradeList(eid,getExamGrades(eid).filter(r=>r.id!==rid));
+
+      const toggleImportant=async d=>{const v=!importantDays[d];setImportantDays(p=>({...p,[d]:v}));try{await API.saveFlag(d,{isImportant:v,isHoliday:!!holidayDays[d]});}catch(e){setError("Error guardando día");}};
+      const toggleHoliday=async d=>{const v=!holidayDays[d];setHolidayDays(p=>({...p,[d]:v}));try{await API.saveFlag(d,{isHoliday:v,isImportant:!!importantDays[d]});}catch(e){setError("Error guardando festivo");}};
+
+      const addClass=async()=>{if(!classForm.subject)return;try{const c=await API.createClass(classForm);setTimetable([...timetable,c]);setClassForm(EMPTY_CLASS);setShowTimetableForm(false);}catch(e){setError("Error añadiendo clase");}};
+      const delClass=async id=>{try{await API.deleteClass(id);setTimetable(timetable.filter(c=>c.id!==id));}catch(e){setError("Error eliminando clase");}};
+      const toggleCancelled=async(cid,date)=>{try{const r=await API.toggleCancelled(cid,date);const k=`${cid}_${date}`;setCancelledClasses(p=>({...p,[k]:r.cancelled}));}catch(e){setError("Error cancelando clase");}};
+      const isCancelled=(cid,date)=>!!cancelledClasses[`${cid}_${date}`];
+      const classesForDay=dow=>timetable.filter(c=>c.dayOfWeek===dow).sort((a,b)=>a.startTime.localeCompare(b.startTime));
+      const timetableActiveOnDate=date=>{if(!timetableEnd)return true;const[ey,em]=timetableEnd.split("-").map(Number);const[dy,dm]=date.split("-").map(Number);return dy<ey||(dy===ey&&dm<=em);};
+      const getLinkedClass=exam=>{if(!exam?.subject||!exam?.date)return null;return classesForDay(dowUtc(exam.date)).find(c=>c.subject===exam.subject)||null;};
+
+      const saveNoteDay=async(date,content)=>{setNotes(p=>({...p,[date]:content}));try{await API.saveNote(date,content);}catch(e){setError("Error guardando nota");}};
+
+      const getGradeConfig=sid=>gradeConfigs[sid]||[];
+      const getGradeVals=sid=>gradeValues[sid]||{};
+      const setGradeValue=async(sid,cid,val)=>{setGradeValues(p=>({...p,[sid]:{...(p[sid]||{}),[cid]:val}}));try{await API.saveGradeValue(sid,cid,val);}catch(e){setError("Error guardando nota");}};
+      const calcGrade=sid=>{const cfg=getGradeConfig(sid);if(!cfg.length)return{final:null,complete:false,allPass:true};const vals=getGradeVals(sid);let ws=0,tw=0,allFilled=true,allPass=true;for(const c of cfg){const raw=vals[c.id]||vals[String(c.id)],filled=raw!==undefined&&raw!=="";if(!filled){allFilled=false;continue;}const n=parseFloat(raw);ws+=n*(c.weight/100);tw+=c.weight/100;if(parseFloat(c.minGrade||0)>0&&n<parseFloat(c.minGrade))allPass=false;}const complete=allFilled&&cfg.length>0,totalW=cfg.reduce((a,c)=>a+(c.weight/100),0)||1;const final=tw>0?(ws/totalW).toFixed(2):null;return{final,complete,allPass};};
+      const isEditingCfg=sid=>!!gradeConfigEditing[sid];
+      const openCfgEdit=sid=>{setLocalGradeCfgs(p=>({...p,[sid]:(gradeConfigs[sid]||[]).map(c=>({...c}))}));setNewComps(p=>({...p,[sid]:{label:"",weight:"",minGrade:""}}));setGradeConfigEditing(p=>({...p,[sid]:true}));};
+      const closeCfgEdit=sid=>setGradeConfigEditing(p=>({...p,[sid]:false}));
+      const saveCfg=async sid=>{try{const saved=await API.saveGradeConfig(sid,localGradeCfgs[sid]||[]);setGradeConfigs(p=>({...p,[sid]:saved}));closeCfgEdit(sid);}catch(e){setError("Error guardando configuración");}};
+      const setLocalCfg=(sid,val)=>setLocalGradeCfgs(p=>({...p,[sid]:val}));
+      const getLocalCfg=sid=>localGradeCfgs[sid]||(gradeConfigs[sid]||[]).map(c=>({...c}));
+      const getNewComp=sid=>newComps[sid]||{label:"",weight:"",minGrade:""};
+      const setNewComp=(sid,val)=>setNewComps(p=>({...p,[sid]:val}));
+      const addComp=sid=>{const nc=getNewComp(sid);if(!nc.label.trim()||!nc.weight)return;setLocalCfg(sid,[...getLocalCfg(sid),{id:"comp_"+Date.now(),label:nc.label.trim(),weight:parseFloat(nc.weight),minGrade:nc.minGrade}]);setNewComp(sid,{label:"",weight:"",minGrade:""});};
+      const delComp=(sid,id)=>setLocalCfg(sid,getLocalCfg(sid).filter(c=>c.id!==id));
+      const saveSettings=async(s)=>{try{await API.updateSettings(s);}catch(e){setError("Error guardando configuración");}};
+
+      const prevPeriod=()=>{const[y,m,d]=selDate.split("-").map(Number);if(view==="month"){const nm=m===1?12:m-1,ny=m===1?y-1:y;setSelDate(`${ny}-${String(nm).padStart(2,"0")}-01`);}else{const dt=new Date(Date.UTC(y,m-1,d));dt.setUTCDate(dt.getUTCDate()-(view==="week"?7:1));setSelDate(dt.toISOString().slice(0,10));}};
+      const nextPeriod=()=>{const[y,m,d]=selDate.split("-").map(Number);if(view==="month"){const nm=m===12?1:m+1,ny=m===12?y+1:y;setSelDate(`${ny}-${String(nm).padStart(2,"0")}-01`);}else{const dt=new Date(Date.UTC(y,m-1,d));dt.setUTCDate(dt.getUTCDate()+(view==="week"?7:1));setSelDate(dt.toISOString().slice(0,10));}};
+
+      const noNav=["exams","stats","timetable","grades"].includes(view);
+      const[selYear,selMonth]=selDate.split("-").map(Number);
+      const hdrLabel=noNav?{exams:"Exámenes",stats:"Estadísticas",timetable:"Horario",grades:"Calculadora de notas"}[view]:view==="week"?(()=>{const w=weekDays(selDate);return`${fmtShort(w[0])} – ${fmtShort(w[6])} ${selYear}`;})():view==="month"?`${MONTH_NAMES[selMonth-1]} ${selYear}`:fmt(selDate)+(selDate===todayStr()?" · hoy":"");
+      const w0=new Date(todayStr()+"T00:00:00");w0.setDate(w0.getDate()-60);
+      const w1=new Date(todayStr()+"T00:00:00");w1.setDate(w1.getDate()+180);
+      const expanded=expandTasks(tasks,w0.toISOString().slice(0,10),w1.toISOString().slice(0,10));
+      const applyFilter=list=>{let l=catFilter==="todos"?list:list.filter(t=>t.cat===catFilter);if(subjectFilter!=="todas")l=l.filter(t=>t.subject===subjectFilter);if(search)l=l.filter(t=>t.title?.toLowerCase().includes(search.toLowerCase())||t.desc?.toLowerCase().includes(search.toLowerCase()));return l;};
+      const dayTasks=d=>applyFilter(expanded.filter(t=>t.date===d));
+      const allDayTasks=d=>expanded.filter(t=>t.date===d);
+      const pendingTasks=applyFilter(expanded.filter(t=>!t.done&&t.date>=todayStr()));
+      const upcomingExams=exams.filter(e=>e.date>=todayStr()).sort((a,b)=>a.date.localeCompare(b.date));
+      const urgentExams=upcomingExams.filter(e=>daysUntil(e.date)<=3);
+      const completedToday=expanded.filter(t=>t.date===todayStr()&&t.done).length;
+      const totalToday=expanded.filter(t=>t.date===todayStr()).length;
+      const selDayTasks=dayTasks(selDate);
+      const selDayAll=allDayTasks(selDate);
+      const selCompleted=selDayAll.filter(t=>t.done).length;
+      const selTotal=selDayAll.length;
+      const pct=selTotal>0?Math.round(selCompleted/selTotal*100):0;
+      const allCatsFilter=[{id:"todos",label:"Todos",color:accent},...cats];
+      const searchResults=search?applyFilter(expanded):[];
+
+      const T=dark
+        ?{bg:"#0f1117",bg2:"#181c27",bg3:"#1e2333",border:"rgba(255,255,255,0.08)",border2:"rgba(255,255,255,0.14)",text:"#e8eaf0",text2:"#9aa0b4",text3:"#5c6278",accent,accentBg:`rgba(${hexToRgb(accent)},0.18)`,green:"#1D9E75",greenBg:"#0d2e22",card:"#181c27",inputBg:"#1e2333",shadow:"0 2px 12px rgba(0,0,0,0.4)"}
+        :{bg:"#f5f6fa",bg2:"#ffffff",bg3:"#eef0f6",border:"rgba(0,0,0,0.08)",border2:"rgba(0,0,0,0.14)",text:"#1a1c24",text2:"#5a5f72",text3:"#9aa0b0",accent,accentBg:lighten(accent,0.88),green:"#0F6E56",greenBg:"#d4f0e6",card:"#ffffff",inputBg:"#f5f6fa",shadow:"0 2px 8px rgba(0,0,0,0.07)"};
+
+      const inp={width:"100%",fontSize,padding:"8px 12px",borderRadius:9,border:`1px solid ${T.border2}`,background:T.inputBg,color:T.text,boxSizing:"border-box",outline:"none",fontFamily:"inherit"};
+      const lbl={fontSize:fontSize-3,color:T.text2,display:"block",marginBottom:4,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.04em"};
+
+      function Tag({color,label}){return <span style={{fontSize:fontSize-3,padding:"2px 8px",borderRadius:99,background:dark?color+"25":lighten(color,0.85),color,fontWeight:700,border:`1px solid ${color}33`}}>{label}</span>;}
+      function PriBadge({priority}){const p=PRIORITIES.find(x=>x.id===priority);if(!p||p.id==="none")return null;return <span style={{fontSize:fontSize-3,padding:"2px 8px",borderRadius:99,background:dark?p.color+"30":"#fff1f0",color:p.color,fontWeight:700,border:`1px solid ${p.color}44`}}>{p.label}</span>;}
+      function Dot({color}){return <span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:color||T.border2,flexShrink:0}}/>;}
+      function StatBar({value,total,color}){const p=total>0?Math.round(value/total*100):0;return <div style={{display:"flex",alignItems:"center",gap:8}}><div style={{flex:1,height:5,borderRadius:99,background:T.bg3,overflow:"hidden"}}><div style={{width:`${p}%`,height:"100%",background:color,borderRadius:99,transition:"width 0.4s"}}/></div><span style={{fontSize:11,color:T.text3,minWidth:30,textAlign:"right"}}>{p}%</span></div>;}
+      function DropZone({date}){const isOver=dragOver===date;return <div onDragOver={e=>{e.preventDefault();setDragOver(date);}} onDragLeave={()=>setDragOver(null)} onDrop={()=>{if(dragId){moveTask(dragId,date);setDragId(null);setDragOver(null);}}} style={{minHeight:isOver?36:4,borderRadius:8,background:isOver?T.accentBg:"transparent",border:isOver?`1px dashed ${T.accent}`:"1px dashed transparent",marginBottom:6,display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s"}}>{isOver&&<span style={{fontSize:11,color:T.accent}}>Soltar aquí</span>}</div>;}
+
+      function TaskItem({t,showDate,draggable:drag}){
+        const overdue=!t.done&&t.deadline&&t.deadline<todayStr();
+        const priColor=PRIORITIES.find(p=>p.id===t.priority)?.color;
+        const cat=getCat(t.cat),sub=getSub(t.subject);
+        return(
+          <div draggable={drag&&!t._recurring} onDragStart={()=>setDragId(t.id)} onDragEnd={()=>setDragId(null)}
+            style={{display:"flex",alignItems:"flex-start",gap:10,padding:"12px 14px",borderRadius:12,border:`1px solid ${priColor?priColor+"44":T.border}`,background:T.card,marginBottom:8,opacity:t.done?0.45:1,cursor:drag&&!t._recurring?"grab":"default",boxShadow:T.shadow,borderLeft:priColor?`3px solid ${priColor}`:undefined}}>
+            <input type="checkbox" style={{width:16,height:16,marginTop:3,cursor:"pointer",accentColor:T.accent,flexShrink:0}} checked={t.done} onChange={()=>toggle(t.id)}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                <p style={{fontSize,color:T.text,textDecoration:t.done?"line-through":"none",margin:0,lineHeight:1.4,fontWeight:t.done?400:600}}>{t.title}{t._recurring&&<span style={{fontSize:fontSize-4,color:T.text3,marginLeft:4}}>↻</span>}</p>
+                <PriBadge priority={t.priority}/>
+              </div>
+              {t.desc&&<p style={{fontSize:fontSize-2,color:T.text2,margin:"4px 0 0",lineHeight:1.5}}>{t.desc}</p>}
+              <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap",marginTop:6}}>
+                {cat&&<Tag color={cat.color} label={cat.label}/>}
+                {sub&&<Tag color={sub.color} label={sub.label}/>}
+                {showDate&&<span style={{fontSize:fontSize-3,color:T.text3,background:T.bg3,padding:"1px 7px",borderRadius:99}}>{fmtShort(t.date)}</span>}
+                {(t.timeStart||t.timeEnd)&&<span style={{fontSize:fontSize-3,padding:"1px 7px",borderRadius:99,background:T.bg3,color:T.text2}}>🕐 {t.timeStart}{t.timeEnd?` – ${t.timeEnd}`:""}</span>}
+                {t.deadline&&<span style={{fontSize:fontSize-3,padding:"1px 7px",borderRadius:99,background:overdue?(dark?"#3a1515":"#fcebeb"):T.bg3,color:overdue?(dark?"#ff8080":"#A32D2D"):T.text2,fontWeight:overdue?600:400}}>⏰ {fmt(t.deadline)}</span>}
+                {t.recur&&t.recur!=="none"&&<span style={{fontSize:fontSize-4,padding:"1px 6px",borderRadius:99,background:T.bg3,color:T.text3}}>↻ {t.recur==="daily"?"diaria":"semanal"}</span>}
+              </div>
+              {t.note&&<p style={{fontSize:fontSize-2,color:T.text2,margin:"6px 0 0",lineHeight:1.5,padding:"6px 10px",background:T.bg3,borderRadius:8,borderLeft:`3px solid ${T.border2}`}}>{t.note}</p>}
+            </div>
+            {!t._recurring&&(
+              <div style={{display:"flex",gap:3,flexShrink:0}}>
+                <button style={{background:"transparent",border:"none",cursor:"pointer",fontSize:13,color:T.accent,padding:"0 3px"}} onClick={()=>openEditTask(t)}>✏️</button>
+                <button style={{background:"transparent",border:"none",cursor:"pointer",fontSize:14,color:T.text3,padding:"0 2px"}} onClick={()=>del(t.id)}>✕</button>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      function ExamCard({e,past}){
+        const s=getSub(e.subject),du=daysUntil(e.date);
+        const urgColor=du<=3?"#991b1b":du<=7?"#c2410c":du<=14?"#b45309":T.green;
+        const grades=getExamGrades(e.id),showGrades=!!examGradeEditing[e.id];
+        const linked=past?null:getLinkedClass(e);
+        const dts=e.timeStart||(linked?.startTime||""),dte=e.timeEnd||(linked?.endTime||"");
+        return(
+          <div style={{background:T.card,borderRadius:14,border:`1px solid ${T.border}`,marginBottom:10,boxShadow:T.shadow,borderLeft:`4px solid ${s?.color||T.accent}`,overflow:"hidden",opacity:past?0.7:1}}>
+            <div style={{padding:"14px 16px"}}>
+              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:6}}>
+                    <span style={{fontSize:fontSize+1,fontWeight:700,color:s?.color||T.accent}}>{s?.label}</span>
+                    <span style={{fontSize:fontSize-2,padding:"2px 9px",borderRadius:99,background:T.bg3,color:T.text2,fontWeight:500}}>{EXAM_TYPES.find(x=>x.id===e.type)?.label}</span>
+                  </div>
+                  <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:6}}>
+                    <span style={{fontSize:fontSize-1,color:T.text2}}>📅 {fmt(e.date)}</span>
+                    {!past&&<span style={{fontSize:fontSize-1,fontWeight:700,color:urgColor}}>{du===0?"¡Hoy!":du===1?"¡Mañana!":`En ${du} días`}</span>}
+                    {(dts||dte)&&<span style={{fontSize:fontSize-2,color:T.text2}}>🕐 {dts}{dte?` – ${dte}`:""}</span>}
+                    {e.building&&<span style={{fontSize:fontSize-2,color:T.text2}}>🏛 {e.building}</span>}
+                    {e.room&&<span style={{fontSize:fontSize-2,color:T.text2}}>📍 {e.room}</span>}
+                    {e.minGrade&&<span style={{fontSize:fontSize-2,padding:"2px 8px",borderRadius:99,background:dark?"#3a150022":"#fff7ed",color:"#c2410c",fontWeight:600}}>Mín. {e.minGrade}</span>}
+                  </div>
+                  {e.notes&&<p style={{fontSize:fontSize-2,color:T.text2,margin:"0 0 8px",padding:"6px 10px",background:T.bg3,borderRadius:8,borderLeft:`3px solid ${T.border2}`,lineHeight:1.5}}>{e.notes}</p>}
+                  {grades.length>0&&(
+                    <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:4}}>
+                      {grades.map(r=>{const gc=gradeColor(r.value,"0");return r.value?<span key={r.id} style={{fontSize:fontSize-2,padding:"2px 9px",borderRadius:99,background:gc?(dark?gc+"22":lighten(gc,0.88)):T.bg3,color:gc||T.text2,fontWeight:700,border:`1px solid ${gc?gc+"44":T.border}`}}>{r.label?`${r.label}: `:""}{r.value}</span>:null;})}
+                    </div>
+                  )}
+                </div>
+                <div style={{display:"flex",gap:5,flexShrink:0,flexDirection:"column",alignItems:"flex-end"}}>
+                  <div style={{display:"flex",gap:5}}>
+                    <button onClick={()=>openEditExam(e)} style={{background:"transparent",border:"none",cursor:"pointer",fontSize:13,color:T.accent,padding:"0 3px"}}>✏️</button>
+                    <button onClick={()=>delExam(e.id)} style={{background:"transparent",border:"none",cursor:"pointer",fontSize:15,color:T.text3,padding:"0 2px"}}>✕</button>
+                  </div>
+                  <button onClick={()=>setExamGradeEditing(p=>({...p,[e.id]:!p[e.id]}))} style={{fontSize:fontSize-2,padding:"3px 10px",borderRadius:99,border:`1px solid ${showGrades?T.accent:T.border2}`,background:showGrades?T.accentBg:"transparent",color:showGrades?T.accent:T.text3,cursor:"pointer",fontWeight:600}}>📊 Notas</button>
+                </div>
+              </div>
+            </div>
+            {showGrades&&(
+              <div style={{padding:"12px 16px",background:T.bg3,borderTop:`1px solid ${T.border}`}}>
+                <p style={{margin:"0 0 10px",fontSize:fontSize-2,fontWeight:600,color:T.text2}}>Notas del examen</p>
+                {grades.map(r=>(
+                  <div key={r.id} style={{display:"grid",gridTemplateColumns:"1fr 100px 32px",gap:7,marginBottom:7,alignItems:"center"}}>
+                    <input style={{...inp,padding:"5px 9px",fontSize:fontSize-1}} value={r.label} onChange={ev=>updateExamGrade(e.id,r.id,"label",ev.target.value)} placeholder="Ej. Test 1"/>
+                    <input type="number" min="0" max="10" step="0.1" style={{...inp,padding:"5px 9px",fontSize:fontSize-1,textAlign:"center",color:gradeColor(r.value,"0")||T.text,fontWeight:700}} value={r.value} onChange={ev=>updateExamGrade(e.id,r.id,"value",ev.target.value)} placeholder="Nota"/>
+                    <button onClick={()=>delExamGradeRow(e.id,r.id)} style={{background:"transparent",border:"none",cursor:"pointer",color:T.text3,fontSize:15}}>✕</button>
+                  </div>
+                ))}
+                <button onClick={()=>addExamGradeRow(e.id)} style={{fontSize:fontSize-2,padding:"5px 14px",borderRadius:9,border:`1px dashed ${T.border2}`,background:"transparent",color:T.text3,cursor:"pointer",width:"100%",marginTop:4}}>+ Añadir nota</button>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      function DayDetailPanel(){
+        if(!selDate||selDate.split("-").length!==3)return null;
+        const catCounts=cats.map(c=>({...c,count:selDayAll.filter(t=>t.cat===c.id).length})).filter(c=>c.count>0);
+        const dayExams=exams.filter(ex=>ex.date===selDate);
+        const dow=dowUtc(selDate),isHol=holidayDays[selDate],isImp=importantDays[selDate];
+        const showTT=timetableActiveOnDate(selDate)&&!isHol;
+        const dayClasses=showTT?classesForDay(dow):[];
+        return(
+          <div style={{marginTop:"1rem",borderRadius:16,border:`1px solid ${isHol?"#f59e0b":isImp?"#f59e0b44":T.border}`,overflow:"hidden",boxShadow:T.shadow}}>
+            <div style={{padding:"14px 18px",background:isHol?(dark?"#2a1f00":"#fffbeb"):T.bg2,borderBottom:`1px solid ${isHol?"#f59e0b44":T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                  <p style={{margin:0,fontSize:fontSize+1,fontWeight:600,color:T.text,textTransform:"capitalize"}}>{fmtFull(selDate)}</p>
+                  <button onClick={()=>toggleImportant(selDate)} style={{background:"transparent",border:"none",cursor:"pointer",fontSize:18,lineHeight:1,padding:0,opacity:isImp?1:0.35}}>⭐</button>
+                  <button onClick={()=>toggleHoliday(selDate)} style={{background:isHol?"#f59e0b22":"transparent",border:isHol?"1px solid #f59e0b44":"1px solid transparent",borderRadius:99,padding:"2px 8px",cursor:"pointer",fontSize:fontSize-2,color:isHol?"#b45309":T.text3,fontWeight:isHol?700:400}}>🎉 {isHol?"Festivo":"+ Festivo"}</button>
+                </div>
+                {isHol&&<p style={{margin:"3px 0 0",fontSize:fontSize-2,color:"#b45309",fontWeight:600}}>Día festivo — horario cancelado</p>}
+                <p style={{margin:"3px 0 0",fontSize:fontSize-2,color:T.text2}}>{selTotal===0?"Sin tareas":`${selCompleted}/${selTotal} completadas`}</p>
+                {selTotal>0&&<div style={{marginTop:7}}><StatBar value={selCompleted} total={selTotal} color={T.green}/></div>}
+              </div>
+              {catCounts.length>0&&<div style={{display:"flex",gap:7,flexWrap:"wrap"}}>{catCounts.map(c=><div key={c.id} style={{textAlign:"center",padding:"6px 10px",borderRadius:10,background:dark?c.color+"18":lighten(c.color,0.88)}}><p style={{margin:0,fontSize:17,fontWeight:700,color:c.color}}>{c.count}</p><p style={{margin:0,fontSize:10,color:c.color,opacity:0.8}}>{c.label}</p></div>)}</div>}
+              {selTotal>0&&(
+                <div style={{width:48,height:48,position:"relative",flexShrink:0}}>
+                  <svg width="48" height="48" style={{position:"absolute",top:0,left:0,transform:"rotate(-90deg)"}}>
+                    <circle cx="24" cy="24" r="20" fill="none" stroke={T.bg3} strokeWidth="4"/>
+                    <circle cx="24" cy="24" r="20" fill="none" stroke={T.green} strokeWidth="4" strokeDasharray={`${2*Math.PI*20}`} strokeDashoffset={`${2*Math.PI*20*(1-pct/100)}`} strokeLinecap="round"/>
+                  </svg>
+                  <span style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:T.text}}>{pct}%</span>
+                </div>
+              )}
+            </div>
+            {dayClasses.length>0&&(
+              <div style={{padding:"12px 16px",background:T.bg3,borderBottom:`1px solid ${T.border}`}}>
+                <p style={{margin:"0 0 8px",fontSize:fontSize-3,fontWeight:700,color:T.text3,textTransform:"uppercase",letterSpacing:"0.05em"}}>Clases</p>
+                {dayClasses.map(cls=>{
+                  const s=getSub(cls.subject),cancelled=isCancelled(cls.id,selDate),ct=CLASS_TYPES.find(x=>x.id===cls.type)||CLASS_TYPES[0];
+                  const examOnClass=dayExams.find(ex=>ex.subject===cls.subject);
+                  return(
+                    <div key={cls.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:11,border:`1px solid ${examOnClass?T.accent+"66":cancelled?"#f59e0b44":s?s.color+"33":T.border}`,background:examOnClass?(dark?T.accent+"18":lighten(T.accent,0.92)):cancelled?(dark?"#2a1f00":"#fffbeb"):T.card,marginBottom:7,borderLeft:`3px solid ${examOnClass?T.accent:cancelled?"#f59e0b":s?.color||T.accent}`}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                          <span style={{fontSize,fontWeight:600,color:cancelled?T.text3:s?.color||T.text,textDecoration:cancelled?"line-through":"none"}}>{s?.label||cls.subject}</span>
+                          <span style={{fontSize:fontSize-3,padding:"2px 7px",borderRadius:99,background:dark?s?.color+"18":lighten(s?.color||"#888",0.88),color:s?.color||T.text2,fontWeight:600}}>{ct.icon} {ct.label}</span>
+                          {examOnClass&&<span style={{fontSize:fontSize-3,padding:"2px 7px",borderRadius:99,background:T.accent+"22",color:T.accent,fontWeight:700}}>📝 Examen</span>}
+                          {cancelled&&<span style={{fontSize:fontSize-3,padding:"2px 7px",borderRadius:99,background:"#f59e0b22",color:"#b45309",fontWeight:700}}>Cancelada</span>}
+                        </div>
+                        <div style={{display:"flex",gap:8,marginTop:3,flexWrap:"wrap"}}>
+                          <span style={{fontSize:fontSize-2,color:T.text2}}>🕐 {cls.startTime}–{cls.endTime}</span>
+                          {cls.building&&<span style={{fontSize:fontSize-2,color:T.text2}}>🏛 {cls.building}</span>}
+                          {cls.room&&<span style={{fontSize:fontSize-2,color:T.text2}}>📍 {cls.room}</span>}
+                        </div>
+                      </div>
+                      <button onClick={()=>toggleCancelled(cls.id,selDate)} style={{fontSize:fontSize-2,padding:"4px 10px",borderRadius:99,border:`1px solid ${cancelled?"#f59e0b":T.border2}`,background:cancelled?(dark?"#f59e0b22":"#fffbeb"):"transparent",color:cancelled?"#b45309":T.text3,cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>{cancelled?"✓ Reponer":"✗ Cancelar"}</button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {dayExams.length>0&&(
+              <div style={{padding:"10px 16px",background:dark?"#1a1020":"#fdf4ff",borderBottom:`1px solid ${T.border}`}}>
+                {dayExams.map(ex=>{const s=getSub(ex.subject);return <div key={ex.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0"}}><span>📝</span><span style={{fontSize:fontSize-1,fontWeight:700,color:s?.color||T.accent}}>{s?.label}</span><span style={{fontSize:fontSize-2,color:T.text2}}>— {EXAM_TYPES.find(x=>x.id===ex.type)?.label}</span>{(ex.timeStart||ex.timeEnd)&&<span style={{fontSize:fontSize-3,color:T.text3}}>🕐 {ex.timeStart}{ex.timeEnd?`–${ex.timeEnd}`:""}</span>}{ex.room&&<span style={{fontSize:fontSize-3,color:T.text3,background:T.bg3,padding:"1px 7px",borderRadius:99}}>📍 {ex.room}</span>}</div>;})}
+              </div>
+            )}
+            <div style={{padding:"14px 16px",background:T.bg}}>
+              <DropZone date={selDate}/>
+              {selDayTasks.length===0
+                ?<div style={{textAlign:"center",padding:"1.5rem 0",color:T.text3,fontSize}}><div style={{fontSize:28,marginBottom:6}}>📋</div>Sin tareas<br/><button onClick={openNewTask} style={{marginTop:10,background:T.accent,border:"none",borderRadius:99,padding:"6px 16px",fontSize:fontSize-2,cursor:"pointer",color:"#fff",fontWeight:600}}>+ Añadir tarea</button></div>
+                :selDayTasks.map(t=><TaskItem key={t.id+t.date} t={t} draggable/>)
+              }
+            </div>
+            <div style={{padding:"0 16px 16px",background:T.bg,borderTop:`1px solid ${T.border}`}}>
+              <label style={{...lbl,margin:"12px 0 6px",display:"block"}}>Notas del día</label>
+              <textarea style={{...inp,minHeight:72,resize:"vertical",lineHeight:1.6,background:T.bg2}} value={notes[selDate]||""} onChange={e=>saveNoteDay(selDate,e.target.value)} placeholder="Escribe aquí tus notas..."/>
+            </div>
+          </div>
+        );
+      }
+
+      function GradeCalculatorCard({subId}){
+        const s=getSub(subId);if(!s)return null;
+        const cfg=getGradeConfig(subId),vals=getGradeVals(subId),{final,complete,allPass}=calcGrade(subId);
+        const passedFinal=final!==null&&parseFloat(final)>=5,showResult=complete,partialFilled=!complete&&final!==null;
+        const editing=isEditingCfg(subId),localCfg=getLocalCfg(subId),nc=getNewComp(subId);
+        const totalWeight=localCfg.reduce((a,c)=>a+(parseFloat(c.weight)||0),0);
+        const inpSm={...inp,padding:"5px 8px",fontSize:fontSize-2};
+        return(
+          <div style={{background:T.card,borderRadius:16,border:`1px solid ${T.border}`,overflow:"hidden",marginBottom:14,boxShadow:T.shadow}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"13px 16px",background:dark?s.color+"22":lighten(s.color,0.88),borderBottom:`1px solid ${s.color}33`}}>
+              <span style={{fontSize:fontSize+1,fontWeight:700,color:s.color}}>{s.label}</span>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                {showResult&&<div style={{padding:"6px 14px",borderRadius:99,background:allPass&&passedFinal?"#0F6E5622":"#991b1b22",border:`1px solid ${allPass&&passedFinal?"#0F6E56":"#991b1b"}`,fontWeight:800,fontSize:fontSize+2,color:allPass&&passedFinal?"#0F6E56":"#991b1b"}}>{final}</div>}
+                {partialFilled&&<div style={{padding:"6px 14px",borderRadius:99,background:T.bg3,border:`1px dashed ${T.border2}`,fontWeight:700,fontSize:fontSize+1,color:T.text3}}>~{final}</div>}
+                <button onClick={()=>editing?closeCfgEdit(subId):openCfgEdit(subId)} style={{fontSize:fontSize-1,padding:"5px 11px",borderRadius:9,border:`1px solid ${s.color}44`,background:editing?s.color:"transparent",color:editing?"#fff":s.color,cursor:"pointer",fontWeight:600}}>{editing?"✕ Cerrar":"⚙ Config"}</button>
+              </div>
+            </div>
+            {editing&&(
+              <div style={{padding:"14px 16px",background:T.bg3,borderBottom:`1px solid ${T.border}`}}>
+                <p style={{margin:"0 0 10px",fontSize:fontSize-2,fontWeight:600,color:T.text2}}>Peso total: <strong style={{color:totalWeight===100?T.green:"#c2410c"}}>{totalWeight}%</strong>{totalWeight!==100&&<span style={{color:"#c2410c"}}> (debe sumar 100%)</span>}</p>
+                {localCfg.map((c,i)=>(
+                  <div key={c.id} style={{display:"grid",gridTemplateColumns:"1fr 80px 80px 32px",gap:6,marginBottom:7,alignItems:"center"}}>
+                    <input style={inpSm} value={c.label} onChange={e=>{const n=[...localCfg];n[i]={...n[i],label:e.target.value};setLocalCfg(subId,n);}} placeholder="Componente"/>
+                    <input style={inpSm} value={c.weight} type="number" min="0" max="100" onChange={e=>{const n=[...localCfg];n[i]={...n[i],weight:parseFloat(e.target.value)||0};setLocalCfg(subId,n);}} placeholder="Peso %"/>
+                    <input style={inpSm} value={c.minGrade} type="number" min="0" max="10" onChange={e=>{const n=[...localCfg];n[i]={...n[i],minGrade:e.target.value};setLocalCfg(subId,n);}} placeholder="Mín."/>
+                    <button onClick={()=>delComp(subId,c.id)} style={{background:"transparent",border:"none",cursor:"pointer",color:T.text3,fontSize:15}}>✕</button>
+                  </div>
+                ))}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 80px 80px 32px",gap:6,marginBottom:10,alignItems:"center"}}>
+                  <input style={inpSm} value={nc.label} onChange={e=>setNewComp(subId,{...nc,label:e.target.value})} placeholder="Nueva componente..." onKeyDown={e=>e.key==="Enter"&&addComp(subId)}/>
+                  <input style={inpSm} value={nc.weight} type="number" min="0" max="100" onChange={e=>setNewComp(subId,{...nc,weight:e.target.value})} placeholder="Peso %"/>
+                  <input style={inpSm} value={nc.minGrade} type="number" min="0" max="10" onChange={e=>setNewComp(subId,{...nc,minGrade:e.target.value})} placeholder="Mín."/>
+                  <button onClick={()=>addComp(subId)} style={{background:T.accent,border:"none",borderRadius:7,cursor:"pointer",color:"#fff",fontSize:16,fontWeight:700,padding:"4px 0"}}>+</button>
+                </div>
+                <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                  <button onClick={()=>closeCfgEdit(subId)} style={{background:"transparent",border:`1px solid ${T.border2}`,borderRadius:9,padding:"6px 14px",fontSize:fontSize-1,cursor:"pointer",color:T.text2}}>Cancelar</button>
+                  <button onClick={()=>saveCfg(subId)} style={{background:T.accent,border:"none",borderRadius:9,padding:"6px 16px",fontSize:fontSize-1,cursor:"pointer",color:"#fff",fontWeight:600}}>Guardar</button>
+                </div>
+              </div>
+            )}
+            {cfg.length===0&&!editing
+              ?<div style={{padding:"16px",textAlign:"center",color:T.text3,fontSize:fontSize-1}}>Configura las componentes con ⚙ Config</div>
+              :(
+                <div style={{padding:"14px 16px"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:10}}>
+                    {cfg.map(comp=>{
+                      const raw=vals[comp.id]||vals[String(comp.id)],filled=raw!==undefined&&raw!=="",gc=filled?gradeColor(raw,comp.minGrade):null;
+                      const bgColor=gc?(dark?gc+"22":lighten(gc,0.88)):(dark?T.inputBg:T.bg3),borderColor=gc?gc+(dark?"88":"44"):T.border;
+                      return(
+                        <div key={comp.id} style={{borderRadius:11,border:`1px solid ${borderColor}`,background:bgColor,padding:"10px 12px",transition:"all 0.2s"}}>
+                          <p style={{margin:"0 0 5px",fontSize:fontSize-2,fontWeight:600,color:T.text2}}>{comp.label}</p>
+                          <p style={{margin:"0 0 6px",fontSize:fontSize-3,color:T.text3}}>{comp.weight}%{comp.minGrade?` · mín. ${comp.minGrade}`:""}</p>
+                          <input type="number" min="0" max="10" step="0.1" value={raw||""} onChange={e=>setGradeValue(subId,comp.id,e.target.value)} placeholder="—" style={{...inp,padding:"5px 8px",fontSize:fontSize+1,fontWeight:700,color:gc||T.text,background:"transparent",border:`1px solid ${borderColor}`,textAlign:"center"}}/>
+                          {filled&&gc&&comp.minGrade&&<p style={{margin:"5px 0 0",fontSize:fontSize-3,textAlign:"center",fontWeight:600,color:gc}}>{parseFloat(raw)>=(parseFloat(comp.minGrade)||0)?"✓":"✗ bajo mín."}</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {final!==null&&(
+                    <div style={{marginTop:14,padding:"12px 16px",borderRadius:12,background:showResult?(allPass&&passedFinal?(dark?"#0F6E5620":"#d4f0e6"):(dark?"#991b1b20":"#fce8e8")):T.bg3,border:`1px solid ${showResult?(allPass&&passedFinal?"#0F6E56":"#991b1b"):T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+                      <div>
+                        <p style={{margin:0,fontSize:fontSize-1,fontWeight:600,color:showResult?(allPass&&passedFinal?T.green:"#991b1b"):T.text2}}>{showResult?(allPass&&passedFinal?"✓ Aprobado":"✗ Suspendido"):"Nota parcial (faltan componentes)"}</p>
+                        {!complete&&<p style={{margin:"2px 0 0",fontSize:fontSize-2,color:T.text3}}>Completa todas las notas para el resultado final</p>}
+                        {showResult&&!allPass&&<p style={{margin:"2px 0 0",fontSize:fontSize-2,color:"#c2410c"}}>Alguna componente no llega a su nota mínima</p>}
+                      </div>
+                      <span style={{fontSize:fontSize+6,fontWeight:800,color:showResult?(allPass&&passedFinal?T.green:"#991b1b"):T.text3}}>{final}</span>
+                    </div>
+                  )}
+                </div>
+              )
+            }
+          </div>
+        );
+      }
+
+      function SettingsPanel(){
+        const[lCats,setLCats]=useState(cats.map(c=>({...c})));
+        const[lSubs,setLSubs]=useState(subjects.map(s=>({...s})));
+        const save=async()=>{setCats(lCats);setSubjects(lSubs);await saveSettings({cats:lCats,subjects:lSubs,accent,dark,fontSize,timetableEnd});setShowSettings(false);};
+        return(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-start",justifyContent:"flex-end",padding:"1rem"}}>
+            <div style={{width:"min(440px,95vw)",maxHeight:"90vh",overflowY:"auto",background:T.bg2,borderRadius:20,border:`1px solid ${T.border}`,boxShadow:"0 8px 40px rgba(0,0,0,0.35)",padding:"1.5rem"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1.25rem"}}>
+                <p style={{margin:0,fontSize:fontSize+2,fontWeight:700,color:T.text}}>Personalización</p>
+                <button onClick={()=>setShowSettings(false)} style={{background:"transparent",border:"none",fontSize:20,cursor:"pointer",color:T.text2}}>✕</button>
+              </div>
+              <div style={{marginBottom:"1.25rem"}}>
+                <label style={lbl}>Color de acento</label>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                  {ACCENTS.map(a=><button key={a} onClick={()=>setAccent(a)} style={{width:30,height:30,borderRadius:"50%",background:a,border:accent===a?`3px solid ${T.text}`:`2px solid ${T.border}`,cursor:"pointer",transform:accent===a?"scale(1.15)":"scale(1)",transition:"transform 0.15s"}}/>)}
+                  <input type="color" value={accent} onChange={e=>setAccent(e.target.value)} style={{width:30,height:30,borderRadius:"50%",border:`2px solid ${T.border}`,cursor:"pointer",padding:0,background:"transparent"}}/>
+                </div>
+              </div>
+              <div style={{marginBottom:"1.25rem"}}>
+                <label style={lbl}>Tamaño de letra</label>
+                <div style={{display:"flex",gap:8}}>{FONT_SIZES.map(f=><button key={f.value} onClick={()=>setFontSize(f.value)} style={{flex:1,padding:"7px 0",borderRadius:9,border:`1px solid ${fontSize===f.value?T.accent:T.border}`,background:fontSize===f.value?T.accentBg:"transparent",color:fontSize===f.value?T.accent:T.text2,fontSize:f.value-2,fontWeight:fontSize===f.value?700:400,cursor:"pointer"}}>{f.label}</button>)}</div>
+              </div>
+              <div style={{marginBottom:"1.25rem",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 14px",borderRadius:12,background:T.bg3,border:`1px solid ${T.border}`}}>
+                <span style={{fontSize,color:T.text,fontWeight:500}}>Modo oscuro</span>
+                <button onClick={()=>setDark(d=>!d)} style={{width:48,height:26,borderRadius:99,background:dark?T.accent:T.border2,border:"none",cursor:"pointer",position:"relative",transition:"background 0.2s"}}>
+                  <span style={{position:"absolute",top:3,left:dark?24:3,width:20,height:20,borderRadius:"50%",background:"#fff",transition:"left 0.2s",boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}/>
+                </button>
+              </div>
+              <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+                <button onClick={()=>setShowSettings(false)} style={{background:"transparent",border:`1px solid ${T.border2}`,borderRadius:9,padding:"7px 16px",fontSize:fontSize-1,cursor:"pointer",color:T.text2}}>Cancelar</button>
+                <button onClick={save} style={{background:T.accent,border:"none",borderRadius:9,padding:"7px 20px",fontSize:fontSize-1,cursor:"pointer",color:"#fff",fontWeight:600}}>Guardar</button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      const VIEWS=[{id:"day",label:"Día"},{id:"week",label:"Semana"},{id:"month",label:"Mes"},{id:"timetable",label:"📅 Horario"},{id:"exams",label:"📝 Exámenes"},{id:"grades",label:"🧮 Notas"},{id:"stats",label:"📊 Stats"},{id:"pending",label:"Pendientes"}];
+      const showAddBtn=!["stats","grades"].includes(view);
+      const getAddLabel=()=>{if(view==="exams")return showExamForm?"✕ Cancelar":"+ Examen";if(view==="timetable")return showTimetableForm?"✕ Cancelar":"+ Clase";return showForm?"✕ Cancelar":"+ Tarea";};
+      const handleAdd=()=>{if(view==="exams"){if(showExamForm){setShowExamForm(false);setEditingExamId(null);}else openNewExam();}else if(view==="timetable"){setShowTimetableForm(f=>!f);}else{if(showForm){setShowForm(false);setEditingTaskId(null);}else openNewTask();}};
+
+      const TaskForm=(
+        <div style={{background:T.bg2,borderRadius:16,border:`1px solid ${T.border}`,padding:"1.25rem",marginBottom:"1.1rem",boxShadow:T.shadow}}>
+          <p style={{margin:"0 0 0.9rem",fontSize:fontSize+1,fontWeight:600,color:T.text}}>{editingTaskId?"Editar tarea":"Nueva tarea"} — <span style={{color:T.accent,fontWeight:400}}>{fmtShort(selDate)}</span></p>
+          <div style={{marginBottom:9}}><label style={lbl}>Título *</label><input style={inp} value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="¿Qué tienes que hacer?" onKeyDown={e=>e.key==="Enter"&&saveTask()}/></div>
+          <div style={{marginBottom:9}}><label style={lbl}>Descripción</label><textarea style={{...inp,minHeight:52,resize:"vertical",lineHeight:1.5}} value={form.desc} onChange={e=>setForm({...form,desc:e.target.value})} placeholder="Detalla la tarea (opcional)..."/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:9,marginBottom:9}}>
+            <div><label style={lbl}>Categoría</label><select style={inp} value={form.cat} onChange={e=>setForm({...form,cat:e.target.value})}>{cats.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}</select></div>
+            <div><label style={lbl}>Asignatura</label><select style={inp} value={form.subject} onChange={e=>setForm({...form,subject:e.target.value})}><option value="">Sin asignatura</option>{subjects.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}</select></div>
+            <div><label style={lbl}>Prioridad</label><select style={inp} value={form.priority} onChange={e=>setForm({...form,priority:e.target.value})}>{PRIORITIES.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}</select></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:9,marginBottom:9}}>
+            <div><label style={lbl}>Hora inicio</label><input type="time" style={inp} value={form.timeStart} onChange={e=>setForm({...form,timeStart:e.target.value})}/></div>
+            <div><label style={lbl}>Hora fin</label><input type="time" style={inp} value={form.timeEnd} onChange={e=>setForm({...form,timeEnd:e.target.value})}/></div>
+            <div><label style={lbl}>Fecha límite</label><input type="date" style={inp} value={form.deadline} onChange={e=>setForm({...form,deadline:e.target.value})}/></div>
+            <div><label style={lbl}>Repetición</label><select style={inp} value={form.recur} onChange={e=>setForm({...form,recur:e.target.value})}>{RECUR.map(r=><option key={r.id} value={r.id}>{r.label}</option>)}</select></div>
+          </div>
+          <div style={{marginBottom:12}}><label style={lbl}>Nota rápida</label><input style={inp} value={form.note} onChange={e=>setForm({...form,note:e.target.value})} placeholder="Nota corta (opcional)..."/></div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={()=>{setShowForm(false);setEditingTaskId(null);}} style={{background:"transparent",border:`1px solid ${T.border2}`,borderRadius:9,padding:"7px 16px",fontSize:fontSize-1,cursor:"pointer",color:T.text2}}>Cancelar</button>
+            <button onClick={saveTask} style={{background:T.accent,border:"none",borderRadius:9,padding:"7px 20px",fontSize:fontSize-1,cursor:"pointer",color:"#fff",fontWeight:600}}>{editingTaskId?"Guardar cambios":"Guardar"}</button>
+          </div>
+        </div>
+      );
+
+      const ExamForm=(
+        <div style={{background:T.bg2,borderRadius:16,border:`1px solid ${T.border}`,padding:"1.25rem",marginBottom:"1.1rem",boxShadow:T.shadow}}>
+          <p style={{margin:"0 0 0.9rem",fontSize:fontSize+1,fontWeight:600,color:T.text}}>{editingExamId?"Editar examen":"Nuevo examen"}</p>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:9,marginBottom:9}}>
+            <div><label style={lbl}>Asignatura *</label><select style={inp} value={examForm.subject} onChange={e=>setExamForm({...examForm,subject:e.target.value})}><option value="">Selecciona</option>{subjects.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}</select></div>
+            <div><label style={lbl}>Fecha *</label><input type="date" style={inp} value={examForm.date} onChange={e=>setExamForm({...examForm,date:e.target.value})}/></div>
+            <div><label style={lbl}>Tipo</label><select style={inp} value={examForm.type} onChange={e=>setExamForm({...examForm,type:e.target.value})}>{EXAM_TYPES.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}</select></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:9}}>
+            <div><label style={lbl}>Hora inicio</label><input type="time" style={inp} value={examForm.timeStart} onChange={e=>setExamForm({...examForm,timeStart:e.target.value})}/></div>
+            <div><label style={lbl}>Hora fin</label><input type="time" style={inp} value={examForm.timeEnd} onChange={e=>setExamForm({...examForm,timeEnd:e.target.value})}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:9,marginBottom:9}}>
+            <div><label style={lbl}>Edificio</label><input style={inp} value={examForm.building} onChange={e=>setExamForm({...examForm,building:e.target.value})} placeholder="Ej. Ada Byron"/></div>
+            <div><label style={lbl}>Aula</label><input style={inp} value={examForm.room} onChange={e=>setExamForm({...examForm,room:e.target.value})} placeholder="Ej. 1.01"/></div>
+            <div><label style={lbl}>Nota mínima</label><input style={inp} value={examForm.minGrade} onChange={e=>setExamForm({...examForm,minGrade:e.target.value})} placeholder="Ej. 5"/></div>
+          </div>
+          <div style={{marginBottom:12}}><label style={lbl}>Notas</label><input style={inp} value={examForm.notes} onChange={e=>setExamForm({...examForm,notes:e.target.value})} placeholder="Temas, apuntes..."/></div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={()=>{setShowExamForm(false);setEditingExamId(null);}} style={{background:"transparent",border:`1px solid ${T.border2}`,borderRadius:9,padding:"7px 16px",fontSize:fontSize-1,cursor:"pointer",color:T.text2}}>Cancelar</button>
+            <button onClick={saveExam} style={{background:T.accent,border:"none",borderRadius:9,padding:"7px 20px",fontSize:fontSize-1,cursor:"pointer",color:"#fff",fontWeight:600}}>{editingExamId?"Guardar cambios":"Guardar"}</button>
+          </div>
+        </div>
+      );
+
+      if(error) return(
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#0f1117",flexDirection:"column",gap:16,padding:"2rem",fontFamily:"system-ui,sans-serif"}}>
+          <div style={{fontSize:48}}>⚠️</div>
+          <p style={{color:"#ff8080",fontSize:18,fontWeight:600,textAlign:"center"}}>{error}</p>
+          <p style={{color:"#5c6278",fontSize:14,textAlign:"center"}}>Asegúrate de que Flask está corriendo con <code style={{background:"#1e2333",padding:"2px 8px",borderRadius:6,color:"#9aa0b4"}}>python run.py</code></p>
+          <button onClick={()=>{setError(null);window.location.reload();}} style={{background:"#185FA5",border:"none",borderRadius:10,padding:"10px 24px",color:"#fff",fontSize:16,cursor:"pointer",fontWeight:600,marginTop:8}}>Reintentar</button>
+        </div>
+      );
+
+      if(!loaded) return(
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#0f1117",flexDirection:"column",gap:12,fontFamily:"system-ui,sans-serif"}}>
+          <div style={{fontSize:40}}>📅</div>
+          <p style={{color:"#9aa0b4",fontSize:16}}>Cargando agenda...</p>
+        </div>
+      );
+
+      return(
+        <div style={{fontFamily:"system-ui,sans-serif",fontSize,padding:"0 0 3rem",maxWidth:800,margin:"0 auto",background:T.bg,minHeight:"100vh",color:T.text}}>
+          {showSettings&&<SettingsPanel/>}
+          {urgentExams.length>0&&(
+            <div style={{background:dark?"#2a0a0a":"#fff1f0",border:"1px solid #991b1b44",borderRadius:12,padding:"10px 16px",marginBottom:"0.85rem",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+              <span>⚠️</span>
+              <span style={{fontSize:fontSize-1,fontWeight:600,color:"#991b1b",flex:1}}>{urgentExams.length===1?`Examen de ${getSub(urgentExams[0].subject)?.label||"una asignatura"} ${daysUntil(urgentExams[0].date)===0?"hoy":daysUntil(urgentExams[0].date)===1?"mañana":`en ${daysUntil(urgentExams[0].date)} días`}`:`${urgentExams.length} exámenes en los próximos 3 días`}</span>
+              <button onClick={()=>setView("exams")} style={{fontSize:fontSize-2,padding:"3px 10px",borderRadius:99,background:"#991b1b",color:"#fff",border:"none",cursor:"pointer",fontWeight:600}}>Ver</button>
+            </div>
+          )}
+          <div style={{background:`linear-gradient(135deg,#0d2340 0%,${accent} 55%,#0F6E56 100%)`,borderRadius:18,padding:"1.4rem 1.5rem",marginBottom:"1.1rem",color:"#fff",boxShadow:`0 4px 24px ${accent}55`}}>
+            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
+                  <p style={{margin:0,fontSize:22,fontWeight:700,letterSpacing:"-0.02em"}}>Mi agenda</p>
+                  <button onClick={()=>setDark(d=>!d)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:99,padding:"3px 9px",cursor:"pointer",fontSize:14,color:"#fff"}}>{dark?"☀️":"🌙"}</button>
+                  <button onClick={()=>setShowSettings(true)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:99,padding:"3px 9px",cursor:"pointer",fontSize:14,color:"#fff"}}>⚙️</button>
+                </div>
+                <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+                  <span style={{fontSize:13,opacity:0.8}}>{totalToday>0?`Hoy: ${completedToday}/${totalToday}`:"Sin tareas hoy"}</span>
+                  <span style={{fontSize:13,opacity:0.5}}>|</span>
+                  <span style={{fontSize:13,opacity:0.8}}>{pendingTasks.length} pendiente{pendingTasks.length!==1?"s":""}</span>
+                  {upcomingExams.length>0&&<><span style={{fontSize:13,opacity:0.5}}>|</span><span style={{fontSize:13,opacity:0.8}}>📝 {upcomingExams.length} examen{upcomingExams.length!==1?"es":""}</span></>}
+                </div>
+                {totalToday>0&&<div style={{marginTop:8,display:"flex",alignItems:"center",gap:8}}><div style={{width:120,height:4,borderRadius:99,background:"rgba(255,255,255,0.2)"}}><div style={{width:`${Math.round(completedToday/totalToday*100)}%`,height:"100%",background:"#4dd9a8",borderRadius:99}}/></div><span style={{fontSize:11,opacity:0.75}}>{Math.round(completedToday/totalToday*100)}%</span></div>}
+              </div>
+              <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+                <button onClick={()=>setShowSearch(s=>!s)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:8,padding:"7px 11px",color:"#fff",cursor:"pointer",fontSize:14}}>🔍</button>
+                {!noNav&&(
+                  <>
+                    <button onClick={prevPeriod} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:8,padding:"7px 13px",color:"#fff",cursor:"pointer",fontSize:16}}>‹</button>
+                    <span style={{fontSize:13,minWidth:145,textAlign:"center",fontWeight:600}}>{hdrLabel}</span>
+                    <button onClick={nextPeriod} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:8,padding:"7px 13px",color:"#fff",cursor:"pointer",fontSize:16}}>›</button>
+                    <button onClick={()=>setSelDate(todayStr())} style={{background:"rgba(255,255,255,0.25)",border:"none",borderRadius:8,padding:"7px 12px",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600}}>Hoy</button>
+                  </>
+                )}
+              </div>
+            </div>
+            {showSearch&&<div style={{marginTop:"1rem"}}><input ref={searchRef} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar tareas..." style={{width:"100%",fontSize,padding:"9px 16px",borderRadius:99,border:"none",background:"rgba(255,255,255,0.18)",color:"#fff",boxSizing:"border-box",outline:"none"}}/></div>}
+          </div>
+
+          {search&&(
+            <div style={{marginBottom:"1rem",borderRadius:14,border:`1px solid ${T.border}`,overflow:"hidden",boxShadow:T.shadow}}>
+              <div style={{padding:"10px 16px",background:T.bg2,borderBottom:`1px solid ${T.border}`,fontSize:fontSize-1,color:T.text2}}><strong style={{color:T.text}}>{searchResults.length}</strong> resultado{searchResults.length!==1?"s":""} para "<strong style={{color:T.accent}}>{search}</strong>"</div>
+              <div style={{padding:"12px 16px",background:T.bg,maxHeight:280,overflowY:"auto"}}>{searchResults.length===0?<p style={{fontSize,color:T.text3,margin:0}}>Sin resultados.</p>:searchResults.map(t=><TaskItem key={t.id+t.date} t={t} showDate/>)}</div>
+            </div>
+          )}
+
+          <div style={{display:"flex",gap:5,marginBottom:"0.85rem",flexWrap:"wrap",alignItems:"center"}}>
+            {VIEWS.map(v=><button key={v.id} onClick={()=>setView(v.id)} style={{fontSize:fontSize-1,padding:"6px 12px",borderRadius:99,border:`1px solid ${view===v.id?T.accent:T.border}`,background:view===v.id?T.accentBg:"transparent",color:view===v.id?T.accent:T.text2,fontWeight:view===v.id?700:400,cursor:"pointer"}}>{v.label}</button>)}
+            {showAddBtn&&<button onClick={handleAdd} style={{marginLeft:"auto",background:T.accent,border:"none",borderRadius:99,padding:"8px 18px",fontSize:fontSize-1,cursor:"pointer",color:"#fff",fontWeight:600,boxShadow:`0 2px 10px ${T.accent}55`}}>{getAddLabel()}</button>}
+          </div>
+
+          {!["stats","timetable","grades"].includes(view)&&(
+            <>
+              <div style={{display:"flex",gap:5,marginBottom:"0.6rem",flexWrap:"wrap",padding:"8px 12px",borderRadius:12,background:T.bg2,border:`1px solid ${T.border}`}}>
+                {allCatsFilter.map(c=><button key={c.id} onClick={()=>setCatFilter(c.id)} style={{fontSize:fontSize-2,padding:"3px 10px",borderRadius:99,border:`1px solid ${catFilter===c.id?c.color:T.border}`,background:catFilter===c.id?(dark?c.color+"22":lighten(c.color,0.88)):"transparent",color:catFilter===c.id?c.color:T.text2,cursor:"pointer",fontWeight:catFilter===c.id?700:400,display:"flex",alignItems:"center",gap:4}}><Dot color={catFilter===c.id?c.color:T.border2}/>{c.label}</button>)}
+              </div>
+              {subjects.length>0&&(
+                <div style={{display:"flex",gap:5,marginBottom:"1rem",flexWrap:"wrap",padding:"8px 12px",borderRadius:12,background:T.bg2,border:`1px solid ${T.border}`}}>
+                  <span style={{fontSize:fontSize-2,color:T.text3,fontWeight:600,alignSelf:"center",marginRight:2}}>Asignatura:</span>
+                  <button onClick={()=>setSubjectFilter("todas")} style={{fontSize:fontSize-2,padding:"3px 10px",borderRadius:99,border:`1px solid ${subjectFilter==="todas"?T.accent:T.border}`,background:subjectFilter==="todas"?T.accentBg:"transparent",color:subjectFilter==="todas"?T.accent:T.text2,cursor:"pointer",fontWeight:subjectFilter==="todas"?700:400}}>Todas</button>
+                  {subjects.map(s=><button key={s.id} onClick={()=>setSubjectFilter(s.id)} style={{fontSize:fontSize-2,padding:"3px 10px",borderRadius:99,border:`1px solid ${subjectFilter===s.id?s.color:T.border}`,background:subjectFilter===s.id?(dark?s.color+"22":lighten(s.color,0.88)):"transparent",color:subjectFilter===s.id?s.color:T.text2,cursor:"pointer",fontWeight:subjectFilter===s.id?700:400,display:"flex",alignItems:"center",gap:4}}><Dot color={subjectFilter===s.id?s.color:T.border2}/>{s.label}</button>)}
+                </div>
+              )}
+            </>
+          )}
+
+          {showForm&&!["exams","stats","timetable","grades"].includes(view)&&TaskForm}
+          {showExamForm&&view==="exams"&&ExamForm}
+
+          {showTimetableForm&&view==="timetable"&&(
+            <div style={{background:T.bg2,borderRadius:16,border:`1px solid ${T.border}`,padding:"1.25rem",marginBottom:"1.1rem",boxShadow:T.shadow}}>
+              <p style={{margin:"0 0 0.9rem",fontSize:fontSize+1,fontWeight:600,color:T.text}}>Nueva clase</p>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:9}}>
+                <div><label style={lbl}>Asignatura *</label><select style={inp} value={classForm.subject} onChange={e=>setClassForm({...classForm,subject:e.target.value})}><option value="">Selecciona</option>{subjects.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}</select></div>
+                <div><label style={lbl}>Día</label><select style={inp} value={classForm.dayOfWeek} onChange={e=>setClassForm({...classForm,dayOfWeek:parseInt(e.target.value)})}>{DAY_NAMES_F.map((d,i)=><option key={i} value={i}>{d}</option>)}</select></div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:9,marginBottom:9}}>
+                <div><label style={lbl}>Hora inicio</label><input type="time" style={inp} value={classForm.startTime} onChange={e=>setClassForm({...classForm,startTime:e.target.value})}/></div>
+                <div><label style={lbl}>Hora fin</label><input type="time" style={inp} value={classForm.endTime} onChange={e=>setClassForm({...classForm,endTime:e.target.value})}/></div>
+                <div><label style={lbl}>Tipo</label><select style={inp} value={classForm.type} onChange={e=>setClassForm({...classForm,type:e.target.value})}>{CLASS_TYPES.map(t=><option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}</select></div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginBottom:12}}>
+                <div><label style={lbl}>Edificio</label><input style={inp} value={classForm.building} onChange={e=>setClassForm({...classForm,building:e.target.value})} placeholder="Ej. Ada Byron"/></div>
+                <div><label style={lbl}>Aula</label><input style={inp} value={classForm.room} onChange={e=>setClassForm({...classForm,room:e.target.value})} placeholder="Ej. 1.01"/></div>
+              </div>
+              <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                <button onClick={()=>setShowTimetableForm(false)} style={{background:"transparent",border:`1px solid ${T.border2}`,borderRadius:9,padding:"7px 16px",fontSize:fontSize-1,cursor:"pointer",color:T.text2}}>Cancelar</button>
+                <button onClick={addClass} style={{background:T.accent,border:"none",borderRadius:9,padding:"7px 20px",fontSize:fontSize-1,cursor:"pointer",color:"#fff",fontWeight:600}}>Guardar</button>
+              </div>
+            </div>
+          )}
+
+          {view==="day"&&(
+            <div>
+              <DropZone date={selDate}/>
+              {selDayTasks.length===0
+                ?<div style={{textAlign:"center",padding:"2.5rem 1rem",color:T.text3,fontSize,background:T.bg2,borderRadius:16,border:`1px solid ${T.border}`}}><div style={{fontSize:32,marginBottom:8}}>📋</div>Sin tareas para este día</div>
+                :selDayTasks.map(t=><TaskItem key={t.id} t={t} draggable/>)
+              }
+              <div style={{marginTop:"1rem",borderRadius:14,border:`1px solid ${T.border}`,overflow:"hidden",boxShadow:T.shadow}}>
+                <div style={{padding:"11px 16px",background:T.bg2,borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <label style={{...lbl,marginBottom:0}}>Notas del día</label>
+                    <button onClick={()=>toggleImportant(selDate)} style={{background:"transparent",border:"none",cursor:"pointer",fontSize:16,lineHeight:1,padding:0,opacity:importantDays[selDate]?1:0.35}}>⭐</button>
+                    <button onClick={()=>toggleHoliday(selDate)} style={{background:holidayDays[selDate]?"#f59e0b22":"transparent",border:holidayDays[selDate]?"1px solid #f59e0b44":"1px solid transparent",borderRadius:99,padding:"2px 8px",cursor:"pointer",fontSize:fontSize-2,color:holidayDays[selDate]?"#b45309":T.text3,fontWeight:holidayDays[selDate]?700:400}}>🎉 {holidayDays[selDate]?"Festivo":"+ Festivo"}</button>
+                  </div>
+                  {selTotal>0&&<span style={{fontSize:fontSize-2,color:T.text3}}>{selCompleted}/{selTotal} completadas</span>}
+                </div>
+                <div style={{padding:"12px 16px",background:T.bg}}><textarea style={{...inp,minHeight:90,resize:"vertical",lineHeight:1.6,background:T.bg2}} value={notes[selDate]||""} onChange={e=>saveNoteDay(selDate,e.target.value)} placeholder="Escribe aquí tus notas..."/></div>
+              </div>
+            </div>
+          )}
+
+          {view==="week"&&(
+            <div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(7,minmax(0,1fr))",gap:7}}>
+                {weekDays(selDate).map((d,i)=>{
+                  const isToday=d===todayStr(),isSel=d===selDate,dt=dayTasks(d),isOver=dragOver===d;
+                  const hasExam=exams.some(ex=>ex.date===d),isImp=importantDays[d],isHol=holidayDays[d];
+                  const showTT=timetableActiveOnDate(d)&&!isHol,hasClass=showTT&&classesForDay(i).length>0;
+                  return(
+                    <div key={d} onClick={()=>setSelDate(d)} onDragOver={e=>{e.preventDefault();setDragOver(d);}} onDragLeave={()=>setDragOver(null)} onDrop={()=>{if(dragId){moveTask(dragId,d);setDragId(null);setDragOver(null);}}}
+                      style={{cursor:"pointer",borderRadius:14,border:`1px solid ${isOver?T.accent:isSel?T.accent:isHol?"#f59e0b":isToday?T.green:isImp?"#f59e0b44":T.border}`,background:isOver?T.accentBg:isSel?T.accentBg:isHol?(dark?"#2a1f00":"#fffbeb"):isToday?T.greenBg:T.bg2,padding:"10px 8px",minHeight:100,boxShadow:isSel||isToday?T.shadow:"none",transition:"all 0.15s",position:"relative"}}>
+                      {isHol&&<span style={{position:"absolute",top:3,left:3,fontSize:10}}>🎉</span>}
+                      {hasExam&&<span style={{position:"absolute",top:5,right:hasClass?16:5,fontSize:10}}>📝</span>}
+                      {hasClass&&<span style={{position:"absolute",top:5,right:5,fontSize:10}}>📚</span>}
+                      {isImp&&!isHol&&<span style={{position:"absolute",top:16,right:5,fontSize:10}}>⭐</span>}
+                      <div style={{fontSize:11,fontWeight:isSel||isToday?700:400,color:isSel?T.accent:isHol?"#b45309":isToday?T.green:T.text2,marginBottom:6,textAlign:"center"}}>{DAY_NAMES_S[i]}<br/><span style={{fontSize:15,color:isSel?T.accent:isHol?"#b45309":isToday?T.green:T.text}}>{d.split("-")[2]}</span></div>
+                      {!isHol&&dt.slice(0,3).map(t=>{const cat=getCat(t.cat);return <div key={t.id+t.date} style={{display:"flex",alignItems:"center",gap:4,marginBottom:3}}><Dot color={cat?.color||T.border2}/><span style={{fontSize:11,color:T.text2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:t.done?"line-through":"none"}}>{t.title}</span></div>;})}
+                      {dt.length>3&&<span style={{fontSize:10,color:T.text3}}>+{dt.length-3} más</span>}
+                    </div>
+                  );
+                })}
+              </div>
+              <DayDetailPanel/>
+            </div>
+          )}
+
+          {view==="month"&&(
+            <div>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                <button onClick={prevPeriod} style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 16px",fontSize:18,cursor:"pointer",color:T.text2,fontWeight:700}}>‹</button>
+                <span style={{fontSize:fontSize+1,fontWeight:700,color:T.text}}>{MONTH_NAMES[selMonth-1]} {selYear}</span>
+                <button onClick={nextPeriod} style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 16px",fontSize:18,cursor:"pointer",color:T.text2,fontWeight:700}}>›</button>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(7,minmax(0,1fr))",gap:3,marginBottom:4}}>
+                {DAY_NAMES_S.map(n=><div key={n} style={{textAlign:"center",fontSize:11,fontWeight:700,color:T.text3,padding:"5px 0",textTransform:"uppercase",letterSpacing:"0.05em"}}>{n}</div>)}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(7,minmax(0,1fr))",gap:4}}>
+                {monthDays(selDate).map(({date:d,cur})=>{
+                  const isToday=d===todayStr(),isSel=d===selDate,dt=allDayTasks(d),fdt=applyFilter(expanded.filter(t=>t.date===d)),isOver=dragOver===d;
+                  const hasExam=exams.some(ex=>ex.date===d),isImp=importantDays[d],isHol=holidayDays[d],dow2=dowUtc(d);
+                  const showTT=timetableActiveOnDate(d)&&!isHol,hasClass=showTT&&classesForDay(dow2).length>0;
+                  const dayExamsMonth=exams.filter(ex=>ex.date===d);
+                  return(
+                    <div key={d} onClick={()=>setSelDate(d)} onDragOver={e=>{e.preventDefault();setDragOver(d);}} onDragLeave={()=>setDragOver(null)} onDrop={()=>{if(dragId){moveTask(dragId,d);setDragId(null);setDragOver(null);}}}
+                      style={{cursor:"pointer",borderRadius:11,border:`1px solid ${isOver?T.accent:isSel?T.accent:isHol?"#f59e0b":isToday?T.green:isImp?"#f59e0b44":T.border}`,background:isOver?T.accentBg:isSel?T.accentBg:isHol?(dark?"#2a1f00":"#fffbeb"):isToday?T.greenBg:T.bg2,padding:"7px 5px",minHeight:68,opacity:cur?1:0.25,transition:"all 0.15s",position:"relative"}}>
+                      {isHol&&<span style={{position:"absolute",top:2,left:2,fontSize:9}}>🎉</span>}
+                      {hasClass&&<span style={{position:"absolute",top:2,right:hasExam||isImp?12:3,fontSize:9}}>📚</span>}
+                      {hasExam&&<span style={{position:"absolute",top:2,right:isImp?12:3,fontSize:9}}>📝</span>}
+                      {isImp&&!isHol&&<span style={{position:"absolute",top:2,right:3,fontSize:9}}>⭐</span>}
+                      <div style={{fontSize:12,fontWeight:isSel||isToday?700:400,color:isSel?T.accent:isHol?"#b45309":isToday?T.green:T.text,marginBottom:4,textAlign:"center"}}>{parseInt(d.split("-")[2])}</div>
+                      {!isHol&&<div style={{display:"flex",flexWrap:"wrap",gap:2,justifyContent:"center"}}>{fdt.slice(0,4).map(t=><Dot key={t.id+t.date} color={(getCat(t.cat)||{color:T.border2}).color}/>)}{fdt.length>4&&<span style={{fontSize:9,color:T.text3}}>+{fdt.length-4}</span>}</div>}
+                      {dt.length>0&&!isHol&&<div style={{marginTop:3,fontSize:9,color:T.text3,textAlign:"center"}}>{dt.filter(t=>t.done).length}/{dt.length}</div>}
+                      {dayExamsMonth.length>0&&!isHol&&<div style={{display:"flex",gap:2,justifyContent:"center",marginTop:3,flexWrap:"wrap"}}>{dayExamsMonth.slice(0,3).map(ex=>{const es=getSub(ex.subject);return <span key={ex.id} style={{display:"inline-block",width:8,height:3,borderRadius:99,background:es?.color||T.accent}}/>;})}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+              <DayDetailPanel/>
+            </div>
+          )}
+
+          {view==="timetable"&&(
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:12,background:T.bg2,border:`1px solid ${T.border}`,marginBottom:"1rem",flexWrap:"wrap"}}>
+                <span style={{fontSize:fontSize-1,color:T.text2,fontWeight:500}}>Horario activo hasta:</span>
+                <input type="month" style={{...inp,width:"auto",flex:1,minWidth:140}} value={timetableEnd} onChange={e=>setTimetableEnd(e.target.value)} placeholder="Sin fecha fin"/>
+                {timetableEnd&&<button onClick={()=>setTimetableEnd("")} style={{fontSize:fontSize-2,padding:"4px 10px",borderRadius:99,border:`1px solid ${T.border2}`,background:"transparent",color:T.text3,cursor:"pointer"}}>✕ Sin límite</button>}
+              </div>
+              {timetable.length===0&&!showTimetableForm
+                ?<div style={{textAlign:"center",padding:"2.5rem 1rem",color:T.text3,fontSize,background:T.bg2,borderRadius:16,border:`1px solid ${T.border}`}}><div style={{fontSize:32,marginBottom:8}}>📅</div>No hay clases añadidas<br/><button onClick={()=>setShowTimetableForm(true)} style={{marginTop:12,background:T.accent,border:"none",borderRadius:99,padding:"7px 18px",fontSize:fontSize-1,cursor:"pointer",color:"#fff",fontWeight:600}}>+ Añadir clase</button></div>
+                :(
+                  <div>
+                    {[0,1,2,3,4,5,6].map(dow=>{
+                      const classes=classesForDay(dow);
+                      if(!classes.length)return null;
+                      const dateForDay=weekDays(selDate)[dow],isHol=holidayDays[dateForDay],showTT=timetableActiveOnDate(dateForDay);
+                      return(
+                        <div key={dow} style={{marginBottom:"1rem"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                            <p style={{margin:0,fontSize,fontWeight:700,color:T.text}}>{DAY_NAMES_F[dow]}</p>
+                            <span style={{fontSize:fontSize-2,color:T.text3,background:T.bg3,padding:"2px 8px",borderRadius:99}}>{fmt(dateForDay)}</span>
+                            {isHol&&<span style={{fontSize:fontSize-2,color:"#b45309",background:"#f59e0b22",padding:"2px 8px",borderRadius:99}}>🎉 Festivo</span>}
+                          </div>
+                          {classes.map(cls=>{
+                            const s=getSub(cls.subject),cancelled=isCancelled(cls.id,dateForDay),ct=CLASS_TYPES.find(x=>x.id===cls.type)||CLASS_TYPES[0];
+                            return(
+                              <div key={cls.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:12,border:`1px solid ${cancelled||isHol?"#f59e0b44":(s?.color||T.accent)+"33"}`,background:cancelled||isHol?(dark?"#2a1f00":"#fffbeb"):T.card,marginBottom:8,boxShadow:T.shadow,borderLeft:`3px solid ${cancelled||isHol?"#f59e0b":s?.color||T.accent}`,opacity:isHol||!showTT?0.5:1}}>
+                                <div style={{flex:1,minWidth:0}}>
+                                  <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+                                    <span style={{fontSize,fontWeight:600,color:cancelled?T.text3:s?.color||T.text,textDecoration:cancelled||isHol?"line-through":"none"}}>{s?.label||cls.subject}</span>
+                                    <span style={{fontSize:fontSize-3,padding:"2px 7px",borderRadius:99,background:dark?s?.color+"18":lighten(s?.color||"#888",0.88),color:s?.color||T.text2,fontWeight:600}}>{ct.icon} {ct.label}</span>
+                                    {cancelled&&<span style={{fontSize:fontSize-3,padding:"2px 8px",borderRadius:99,background:"#f59e0b22",color:"#b45309",fontWeight:700}}>Cancelada</span>}
+                                  </div>
+                                  <div style={{display:"flex",gap:10,marginTop:3,flexWrap:"wrap"}}>
+                                    <span style={{fontSize:fontSize-2,color:T.text2}}>🕐 {cls.startTime}–{cls.endTime}</span>
+                                    {cls.building&&<span style={{fontSize:fontSize-2,color:T.text2}}>🏛 {cls.building}</span>}
+                                    {cls.room&&<span style={{fontSize:fontSize-2,color:T.text2}}>📍 {cls.room}</span>}
+                                  </div>
+                                </div>
+                                <div style={{display:"flex",gap:6,flexShrink:0}}>
+                                  {!isHol&&showTT&&<button onClick={()=>toggleCancelled(cls.id,dateForDay)} style={{fontSize:fontSize-2,padding:"4px 10px",borderRadius:99,border:`1px solid ${cancelled?"#f59e0b":T.border2}`,background:cancelled?(dark?"#f59e0b22":"#fffbeb"):"transparent",color:cancelled?"#b45309":T.text3,cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>{cancelled?"✓ Reponer":"✗ Cancelar"}</button>}
+                                  <button onClick={()=>delClass(cls.id)} style={{background:"transparent",border:"none",cursor:"pointer",fontSize:14,color:T.text3,padding:"0 2px"}}>✕</button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+              }
+            </div>
+          )}
+
+          {view==="exams"&&(
+            <div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:"1.1rem"}}>
+                {[{label:"Próximos",value:upcomingExams.length,color:T.accent},{label:"Esta semana",value:upcomingExams.filter(e=>daysUntil(e.date)<=7).length,color:"#c2410c"},{label:"Con notas",value:exams.filter(e=>getExamGrades(e.id).some(r=>r.value)).length,color:T.green}].map(s=>(
+                  <div key={s.label} style={{background:T.bg2,borderRadius:14,border:`1px solid ${T.border}`,padding:"14px 16px",boxShadow:T.shadow}}>
+                    <p style={{margin:0,fontSize:26,fontWeight:700,color:s.color}}>{s.value}</p>
+                    <p style={{margin:"2px 0 0",fontSize:fontSize-2,color:T.text2}}>{s.label}</p>
+                  </div>
+                ))}
+              </div>
+              {upcomingExams.length===0
+                ?<div style={{textAlign:"center",padding:"2.5rem 1rem",color:T.text3,fontSize,background:T.bg2,borderRadius:16,border:`1px solid ${T.border}`}}><div style={{fontSize:32,marginBottom:8}}>📝</div>No hay exámenes próximos</div>
+                :upcomingExams.map(e=><ExamCard key={e.id} e={e}/>)
+              }
+              {exams.filter(e=>e.date<todayStr()).length>0&&(
+                <details style={{marginTop:"1rem"}}>
+                  <summary style={{fontSize:fontSize-1,color:T.text3,cursor:"pointer",padding:"8px 0"}}>Exámenes pasados ({exams.filter(e=>e.date<todayStr()).length})</summary>
+                  <div style={{marginTop:8}}>{exams.filter(e=>e.date<todayStr()).sort((a,b)=>b.date.localeCompare(a.date)).map(e=><ExamCard key={e.id} e={e} past/>)}</div>
+                </details>
+              )}
+            </div>
+          )}
+
+          {view==="grades"&&(
+            <div>
+              {subjects.length===0
+                ?<div style={{textAlign:"center",padding:"2.5rem 1rem",color:T.text3,fontSize,background:T.bg2,borderRadius:16,border:`1px solid ${T.border}`}}><div style={{fontSize:32,marginBottom:8}}>🧮</div>Añade asignaturas en ⚙️ para usar la calculadora</div>
+                :<div>
+                  <p style={{fontSize:fontSize-1,color:T.text2,margin:"0 0 1rem"}}>La nota final solo se marca como aprobado/suspendido cuando están todas las componentes rellenas.</p>
+                  {subjects.map(s=><GradeCalculatorCard key={s.id} subId={s.id}/>)}
+                </div>
+              }
+            </div>
+          )}
+
+          {view==="stats"&&(
+            <div>
+              {subjects.map(s=>{
+                const sExams=exams.filter(e=>e.subject===s.id);
+                const sTasks=expanded.filter(t=>t.subject===s.id);
+                const done=sTasks.filter(t=>t.done).length;
+                return(
+                  <div key={s.id} style={{background:T.card,borderRadius:16,border:`1px solid ${T.border}`,padding:"16px 18px",marginBottom:12,boxShadow:T.shadow,borderLeft:`4px solid ${s.color}`}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
+                      <span style={{fontSize:fontSize+2,fontWeight:700,color:s.color}}>{s.label}</span>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:12}}>
+                      {[{label:"Exámenes",val:sExams.length,c:T.accent},{label:"Tareas",val:sTasks.length,c:T.text2},{label:"Completadas",val:done,c:T.green}].map(x=>(
+                        <div key={x.label} style={{textAlign:"center",padding:"8px 4px",borderRadius:10,background:T.bg3}}>
+                          <p style={{margin:0,fontSize:fontSize+2,fontWeight:700,color:x.c}}>{x.val}</p>
+                          <p style={{margin:"2px 0 0",fontSize:10,color:T.text3}}>{x.label}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <StatBar value={done} total={sTasks.length} color={s.color}/>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {view==="pending"&&(
+            <div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:"1.1rem"}}>
+                {[{label:"Pendientes",value:pendingTasks.length,color:T.accent},{label:"Para hoy",value:pendingTasks.filter(t=>t.date===todayStr()).length,color:T.green},{label:"Muy alta",value:pendingTasks.filter(t=>t.priority==="vhigh").length,color:"#991b1b"}].map(s=>(
+                  <div key={s.label} style={{background:T.bg2,borderRadius:14,border:`1px solid ${T.border}`,padding:"14px 16px",boxShadow:T.shadow}}>
+                    <p style={{margin:0,fontSize:26,fontWeight:700,color:s.color}}>{s.value}</p>
+                    <p style={{margin:"2px 0 0",fontSize:fontSize-2,color:T.text2}}>{s.label}</p>
+                  </div>
+                ))}
+              </div>
+              {pendingTasks.length===0
+                ?<div style={{textAlign:"center",padding:"2.5rem 1rem",color:T.text3,fontSize,background:T.bg2,borderRadius:16,border:`1px solid ${T.border}`}}><div style={{fontSize:32,marginBottom:8}}>✅</div>¡Todo al día!</div>
+                :pendingTasks.sort((a,b)=>{const po={vhigh:0,high:1,none:2};const pd=(po[a.priority||"none"]||0)-(po[b.priority||"none"]||0);if(pd!==0)return pd;if(a.deadline&&b.deadline)return a.deadline.localeCompare(b.deadline);if(a.deadline)return -1;if(b.deadline)return 1;return a.date.localeCompare(b.date);}).map(t=><TaskItem key={t.id+t.date} t={t} showDate/>)
+              }
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
