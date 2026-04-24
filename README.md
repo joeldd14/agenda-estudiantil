@@ -47,6 +47,7 @@ La aplicación estará disponible en `http://127.0.0.1:5000`
 
 ## Estructura del proyecto
 
+```
 agenda-python/
 ├── app/
 │ ├── init.py # Application factory (patrón Flask estándar)
@@ -62,6 +63,7 @@ agenda-python/
 │ └── agenda.db # Base de datos SQLite (generada automáticamente)
 ├── requirements.txt
 └── run.py # Punto de entrada
+```
 
 ## API REST
 
