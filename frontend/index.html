@@ -19,7 +19,9 @@
     const { useState, useEffect, useRef } = React;
 
     // ── API ──────────────────────────────────────────────
-    const BASE_URL = "http://127.0.0.1:5000/api";
+    const BASE_URL = window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost"
+      ? "http://127.0.0.1:5000/api"
+      : "/api";
     async function request(endpoint, method = "GET", body = null) {
       const options = { method, headers: { "Content-Type": "application/json" } };
       if (body) options.body = JSON.stringify(body);
