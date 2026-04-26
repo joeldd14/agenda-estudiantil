@@ -567,36 +567,85 @@
       function SettingsPanel(){
         const[lCats,setLCats]=useState(cats.map(c=>({...c})));
         const[lSubs,setLSubs]=useState(subjects.map(s=>({...s})));
+        const[newCat,setNewCat]=useState({label:"",color:"#4f46e5"});
+        const[newSub,setNewSub]=useState({label:"",color:"#0f766e"});
         const save=async()=>{setCats(lCats);setSubjects(lSubs);await saveSettings({cats:lCats,subjects:lSubs,accent,dark,fontSize,timetableEnd});setShowSettings(false);};
         return(
-          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-start",justifyContent:"flex-end",padding:"1rem"}}>
-            <div style={{width:"min(440px,95vw)",maxHeight:"90vh",overflowY:"auto",background:T.bg2,borderRadius:20,border:`1px solid ${T.border}`,boxShadow:"0 8px 40px rgba(0,0,0,0.35)",padding:"1.5rem"}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1.25rem"}}>
-                <p style={{margin:0,fontSize:fontSize+2,fontWeight:700,color:T.text}}>Personalización</p>
-                <button onClick={()=>setShowSettings(false)} style={{background:"transparent",border:"none",fontSize:20,cursor:"pointer",color:T.text2}}>✕</button>
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"flex-start",justifyContent:"flex-end",padding:"1rem"}}>
+                <div style={{width:"min(440px,95vw)",maxHeight:"90vh",overflowY:"auto",background:T.bg2,borderRadius:20,border:`1px solid ${T.border}`,boxShadow:"0 8px 40px rgba(0,0,0,0.35)",padding:"1.5rem"}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1.25rem"}}>
+                        <p style={{margin:0,fontSize:fontSize+2,fontWeight:700,color:T.text}}>Personalización</p>
+                        <button onClick={()=>setShowSettings(false)} style={{background:"transparent",border:"none",fontSize:20,cursor:"pointer",color:T.text2}}>✕</button>
+                    </div>
+
+                    {/* Color de acento */}
+                    <div style={{marginBottom:"1.25rem"}}>
+                        <label style={lbl}>Color de acento</label>
+                        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                            {ACCENTS.map(a=><button key={a} onClick={()=>setAccent(a)} style={{width:30,height:30,borderRadius:"50%",background:a,border:accent===a?`3px solid ${T.text}`:`2px solid ${T.border}`,cursor:"pointer",transform:accent===a?"scale(1.15)":"scale(1)",transition:"transform 0.15s"}}/>)}
+                            <input type="color" value={accent} onChange={e=>setAccent(e.target.value)} style={{width:30,height:30,borderRadius:"50%",border:`2px solid ${T.border}`,cursor:"pointer",padding:0,background:"transparent"}}/>
+                        </div>
+                    </div>
+
+                    {/* Tamaño de letra */}
+                    <div style={{marginBottom:"1.25rem"}}>
+                        <label style={lbl}>Tamaño de letra</label>
+                        <div style={{display:"flex",gap:8}}>{FONT_SIZES.map(f=><button key={f.value} onClick={()=>setFontSize(f.value)} style={{flex:1,padding:"7px 0",borderRadius:9,border:`1px solid ${fontSize===f.value?T.accent:T.border}`,background:fontSize===f.value?T.accentBg:"transparent",color:fontSize===f.value?T.accent:T.text2,fontSize:f.value-2,fontWeight:fontSize===f.value?700:400,cursor:"pointer"}}>{f.label}</button>)}</div>
+                    </div>
+
+                    {/* Modo oscuro */}
+                    <div style={{marginBottom:"1.25rem",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 14px",borderRadius:12,background:T.bg3,border:`1px solid ${T.border}`}}>
+                        <span style={{fontSize,color:T.text,fontWeight:500}}>Modo oscuro</span>
+                        <button onClick={()=>setDark(d=>!d)} style={{width:48,height:26,borderRadius:99,background:dark?T.accent:T.border2,border:"none",cursor:"pointer",position:"relative",transition:"background 0.2s"}}>
+                            <span style={{position:"absolute",top:3,left:dark?24:3,width:20,height:20,borderRadius:"50%",background:"#fff",transition:"left 0.2s",boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}/>
+                        </button>
+                    </div>
+
+                    {/* Categorías */}
+                    <div style={{marginBottom:"1.25rem"}}>
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                            <label style={{...lbl,marginBottom:0}}>Categorías</label>
+                            <button onClick={()=>setLCats(DEFAULT_CATS)} style={{fontSize:fontSize-3,color:T.text3,background:"transparent",border:"none",cursor:"pointer"}}>Restablecer</button>
+                        </div>
+                        {lCats.map((it,i)=>(
+                            <div key={it.id||i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:7,padding:"8px 12px",borderRadius:10,background:T.bg3,border:`1px solid ${T.border}`}}>
+                                <input type="color" value={it.color} onChange={e=>{const n=[...lCats];n[i]={...n[i],color:e.target.value};setLCats(n);}} style={{width:22,height:22,borderRadius:"50%",border:"none",cursor:"pointer",padding:0,background:"transparent",flexShrink:0}}/>
+                                <input value={it.label} onChange={e=>{const n=[...lCats];n[i]={...n[i],label:e.target.value};setLCats(n);}} style={{flex:1,background:"transparent",border:"none",outline:"none",fontSize,color:T.text,fontWeight:500,fontFamily:"inherit"}}/>
+                                <button onClick={()=>setLCats(lCats.filter((_,j)=>j!==i))} style={{background:"transparent",border:"none",cursor:"pointer",color:T.text3,fontSize:15,flexShrink:0}}>✕</button>
+                            </div>
+                        ))}
+                        <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center"}}>
+                            <input type="color" value={newCat.color} onChange={e=>setNewCat({...newCat,color:e.target.value})} style={{width:34,height:34,borderRadius:9,border:`1px solid ${T.border2}`,cursor:"pointer",padding:2,background:"transparent",flexShrink:0}}/>
+                            <input value={newCat.label} onChange={e=>setNewCat({...newCat,label:e.target.value})} style={{flex:1,padding:"8px 12px",borderRadius:9,border:`1px solid ${T.border2}`,background:T.inputBg,color:T.text,fontSize,outline:"none",fontFamily:"inherit"}} placeholder="Nueva categoría..." onKeyDown={e=>{if(e.key==="Enter"&&newCat.label.trim()){setLCats([...lCats,{id:"cat_"+Date.now(),label:newCat.label.trim(),color:newCat.color}]);setNewCat({label:"",color:"#4f46e5"});}}}/>
+                            <button onClick={()=>{if(!newCat.label.trim())return;setLCats([...lCats,{id:"cat_"+Date.now(),label:newCat.label.trim(),color:newCat.color}]);setNewCat({label:"",color:"#4f46e5"});}} style={{background:T.accent,border:"none",borderRadius:9,padding:"0 14px",cursor:"pointer",color:"#fff",fontWeight:700,fontSize,height:36,flexShrink:0}}>+</button>
+                        </div>
+                    </div>
+
+                    {/* Asignaturas */}
+                    <div style={{marginBottom:"1.25rem"}}>
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                            <label style={{...lbl,marginBottom:0}}>Asignaturas</label>
+                            <button onClick={()=>setLSubs(DEFAULT_SUBJECTS)} style={{fontSize:fontSize-3,color:T.text3,background:"transparent",border:"none",cursor:"pointer"}}>Restablecer</button>
+                        </div>
+                        {lSubs.map((it,i)=>(
+                            <div key={it.id||i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:7,padding:"8px 12px",borderRadius:10,background:T.bg3,border:`1px solid ${T.border}`}}>
+                                <input type="color" value={it.color} onChange={e=>{const n=[...lSubs];n[i]={...n[i],color:e.target.value};setLSubs(n);}} style={{width:22,height:22,borderRadius:"50%",border:"none",cursor:"pointer",padding:0,background:"transparent",flexShrink:0}}/>
+                                <input value={it.label} onChange={e=>{const n=[...lSubs];n[i]={...n[i],label:e.target.value};setLSubs(n);}} style={{flex:1,background:"transparent",border:"none",outline:"none",fontSize,color:T.text,fontWeight:500,fontFamily:"inherit"}}/>
+                                <button onClick={()=>setLSubs(lSubs.filter((_,j)=>j!==i))} style={{background:"transparent",border:"none",cursor:"pointer",color:T.text3,fontSize:15,flexShrink:0}}>✕</button>
+                            </div>
+                        ))}
+                        <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center"}}>
+                            <input type="color" value={newSub.color} onChange={e=>setNewSub({...newSub,color:e.target.value})} style={{width:34,height:34,borderRadius:9,border:`1px solid ${T.border2}`,cursor:"pointer",padding:2,background:"transparent",flexShrink:0}}/>
+                            <input value={newSub.label} onChange={e=>setNewSub({...newSub,label:e.target.value})} style={{flex:1,padding:"8px 12px",borderRadius:9,border:`1px solid ${T.border2}`,background:T.inputBg,color:T.text,fontSize,outline:"none",fontFamily:"inherit"}} placeholder="Nueva asignatura..." onKeyDown={e=>{if(e.key==="Enter"&&newSub.label.trim()){setLSubs([...lSubs,{id:"sub_"+Date.now(),label:newSub.label.trim(),color:newSub.color}]);setNewSub({label:"",color:"#0f766e"});}}}/>
+                            <button onClick={()=>{if(!newSub.label.trim())return;setLSubs([...lSubs,{id:"sub_"+Date.now(),label:newSub.label.trim(),color:newSub.color}]);setNewSub({label:"",color:"#0f766e"});}} style={{background:T.accent,border:"none",borderRadius:9,padding:"0 14px",cursor:"pointer",color:"#fff",fontWeight:700,fontSize,height:36,flexShrink:0}}>+</button>
+                        </div>
+                    </div>
+
+                  <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+                    <button onClick={()=>setShowSettings(false)} style={{background:"transparent",border:`1px solid ${T.border2}`,borderRadius:9,padding:"7px 16px",fontSize:fontSize-1,cursor:"pointer",color:T.text2}}>Cancelar</button>
+                    <button onClick={save} style={{background:T.accent,border:"none",borderRadius:9,padding:"7px 20px",fontSize:fontSize-1,cursor:"pointer",color:"#fff",fontWeight:600}}>Guardar</button>
+                  </div>
               </div>
-              <div style={{marginBottom:"1.25rem"}}>
-                <label style={lbl}>Color de acento</label>
-                <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                  {ACCENTS.map(a=><button key={a} onClick={()=>setAccent(a)} style={{width:30,height:30,borderRadius:"50%",background:a,border:accent===a?`3px solid ${T.text}`:`2px solid ${T.border}`,cursor:"pointer",transform:accent===a?"scale(1.15)":"scale(1)",transition:"transform 0.15s"}}/>)}
-                  <input type="color" value={accent} onChange={e=>setAccent(e.target.value)} style={{width:30,height:30,borderRadius:"50%",border:`2px solid ${T.border}`,cursor:"pointer",padding:0,background:"transparent"}}/>
-                </div>
-              </div>
-              <div style={{marginBottom:"1.25rem"}}>
-                <label style={lbl}>Tamaño de letra</label>
-                <div style={{display:"flex",gap:8}}>{FONT_SIZES.map(f=><button key={f.value} onClick={()=>setFontSize(f.value)} style={{flex:1,padding:"7px 0",borderRadius:9,border:`1px solid ${fontSize===f.value?T.accent:T.border}`,background:fontSize===f.value?T.accentBg:"transparent",color:fontSize===f.value?T.accent:T.text2,fontSize:f.value-2,fontWeight:fontSize===f.value?700:400,cursor:"pointer"}}>{f.label}</button>)}</div>
-              </div>
-              <div style={{marginBottom:"1.25rem",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 14px",borderRadius:12,background:T.bg3,border:`1px solid ${T.border}`}}>
-                <span style={{fontSize,color:T.text,fontWeight:500}}>Modo oscuro</span>
-                <button onClick={()=>setDark(d=>!d)} style={{width:48,height:26,borderRadius:99,background:dark?T.accent:T.border2,border:"none",cursor:"pointer",position:"relative",transition:"background 0.2s"}}>
-                  <span style={{position:"absolute",top:3,left:dark?24:3,width:20,height:20,borderRadius:"50%",background:"#fff",transition:"left 0.2s",boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}/>
-                </button>
-              </div>
-              <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
-                <button onClick={()=>setShowSettings(false)} style={{background:"transparent",border:`1px solid ${T.border2}`,borderRadius:9,padding:"7px 16px",fontSize:fontSize-1,cursor:"pointer",color:T.text2}}>Cancelar</button>
-                <button onClick={save} style={{background:T.accent,border:"none",borderRadius:9,padding:"7px 20px",fontSize:fontSize-1,cursor:"pointer",color:"#fff",fontWeight:600}}>Guardar</button>
-              </div>
-            </div>
           </div>
         );
       }
