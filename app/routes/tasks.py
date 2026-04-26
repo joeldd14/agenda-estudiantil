@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from ..database import db
 from ..models import Task
+from flask_jwt_extended import jwt_required, get_jwt_identity
 
 #Blueprint es una forma de agrupar rutas relacionadas 
 # "tasks" es el nombre interno, url_prefix añade /api/tasks a todas las rutas de este fichero automáticamente
@@ -9,8 +10,10 @@ tasks_bp = Blueprint("tasks", __name__, url_prefix="/api/tasks")
 #-- GET /api/tasks --------------------------
 #Devuelve todas las tareas 
 @tasks_bp.route("/", methods=["GET"])
+@jwt_required()
 def get_tasks():
-    tasks = Task.query.all() #equivale a SELECT * FROM tasks
+    user_id = get_jwt_identity()
+    tasks = Task.query.filter_by(user_id=user_id).all() #equivale a SELECT * FROM tasks
     #to_dict() convierte cada objeto Task a diccionario
     #jsonify() convierte el diccionario a JSON para enviarlo
     return jsonify([t.to_dict() for t in tasks])
@@ -19,7 +22,9 @@ def get_tasks():
 #Crea una tarea nueva
 #El frontend manda los datos en el body de la petición como JSON 
 @tasks_bp.route("/", methods=["POST"])
+@jwt_required()
 def create_task():
+    user_id = get_jwt_identity()
     data = request.get_json() #Lee el JSON que manda el frontend
     
     #Validación básica: el título es obligatorio
@@ -27,6 +32,7 @@ def create_task():
         return jsonify({"error": "El título es obligatorio"}), 400
 
     task = Task(
+        user_id=user_id,
         title=data.get("title"),
         description=data.get("description"),  #.get() devuelve None si no existe
         date=data.get("date"),
@@ -50,9 +56,11 @@ def create_task():
 #Edita una tarea existente
 #<int:task_id> captura el número de la URL: /api/tasks/5
 @tasks_bp.route("/<int:task_id>", methods=["PUT"])
+@jwt_required()
 def update_task(task_id):
+    user_id = get_jwt_identity()
     #get_or_404 busca la tarea y si no existe devuelve el error 404
-    task = Task.query.get_or_404(task_id)
+    task = Task.query.filter_by(user_id=user_id, id=task_id).first()
     data = request.get_json() #lee el JSON que manda el frontend
     
     #Solo actualizamos los campos que vienen en la petición 
@@ -74,8 +82,10 @@ def update_task(task_id):
 
 #-- DELETE /api/tasks/<id> --------------------------
 @tasks_bp.route("/<int:task_id>", methods=["DELETE"])
+@jwt_required()
 def delete_task(task_id):
-    task = Task.query.get_or_404(task_id) #busca la tarea 
+    user_id = get_jwt_identity()
+    task = Task.query.filter_by(id=task_id, user_id=user_id).first_or_404()
     db.session.delete(task) #prepara el DELETE
     db.session.commit() #ejecuta el DELETE en SQLite 
     return jsonify({"message": "Tarea eliminada correctamente"}), 200

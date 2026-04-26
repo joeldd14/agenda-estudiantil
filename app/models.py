@@ -1,5 +1,8 @@
 from .database import db
-from datetime import datetime
+from datetime import datetime, date
+
+def today_str():
+    return date.today().isoformat()
 
 #--------------------------------------
 #    TASKS - Tareas del usuario 
@@ -9,6 +12,7 @@ class Task(db.Model):
     
     #primary_key = True -> columna única que identifica cada fila con autoincrement automático
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     
     #nullable = False -> CAMPO OBLIGATORIO, no puede estar vacío
     title = db.Column(db.String(200), nullable=False)
@@ -61,6 +65,7 @@ class Exam(db.Model):
     __tablename__ = "exams"
     
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     subject = db.Column(db.String(50), nullable=False)
     date = db.Column(db.String(10), nullable=False)
     
@@ -107,6 +112,7 @@ class ExamGrade(db.Model):
     __tablename__ = "exam_grades"
     
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     
     #ForeignKey -> esta columna apunta al id de la tabla exams
     # Si el examen se borra, esta fila también (por el cascade de arriba) 
@@ -130,6 +136,7 @@ class TimetableClass(db.Model):
     __tablename__ = "timetable"
     
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     subject = db.Column(db.String(50), nullable=False)
     
     day_of_week = db.Column(db.Integer, nullable=False)
@@ -163,6 +170,7 @@ class CancelledClass(db.Model):
     __tablename__ = "cancelled_classes"
     
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     
     #Qué clase está cancelada
     class_id = db.Column(db.Integer, db.ForeignKey("timetable.id"), nullable=False)
@@ -183,7 +191,8 @@ class DayNote(db.Model):
     __tablename__ = "day_notes"
     
     id = db.Column(db.Integer, primary_key=True)
-    date = db.Column(db.String(10), nullable=False, unique=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    date = db.Column(db.String(10), nullable=False)
     content = db.Column(db.Text, nullable=True)
     
     def to_dict(self):
@@ -200,7 +209,8 @@ class DayFlag(db.Model):
     __tablename__ = "day_flags"
     
     id = db.Column(db.Integer, primary_key=True)
-    date = db.Column(db.String(10), nullable=False, unique=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    date = db.Column(db.String(10), nullable=False)
     is_holiday = db.Column(db.Boolean, nullable=False, default=False)
     is_important = db.Column(db.Boolean, nullable=False, default=False)
         
@@ -219,6 +229,7 @@ class GradeConfig(db.Model):
     __tablename__ = "grade_configs"
     
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     
     subject_key = db.Column(db.String(50), nullable=False)
     
@@ -242,6 +253,7 @@ class GradeValue(db.Model):
     __tablename__ = "grade_values"
     
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     subject_key = db.Column(db.String(50), nullable=False)
     
     #ForeignKey -> se vincula con el objeto GradeConfig
@@ -264,6 +276,7 @@ class AppSettings(db.Model):
     __tablename__ = "app_settings"
     
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     
     #Guardamos categorías y asignaturas como JSON en texto
     #Es más simple que crear tablas separadas para listas  que el usuario personaliza libremente
@@ -287,3 +300,29 @@ class AppSettings(db.Model):
             "font_size": self.font_size,
             "timetable_end": self.timetable_end
         }
+
+#-------------------------------------------------------
+#    USER - Usuarios de la app
+#-------------------------------------------------------
+class User(db.Model):
+    __tablename__ = "users"
+    
+    id = db.Column(db.Integer, primary_key=True)
+    
+    #unique=True --> no pueden haber 2 usuarios con el mismo email
+    email = db.Column(db.String(120), nullable=False, unique=True)
+    
+    #Guardamos la contraseña encriptada con bcrypt, nunca en texto plano
+    #El hash de bcrypt siempre ocupa 60 caracteres
+    password_hash = db.Column(db.String(60), nullable=False)
+    
+    #Fecha de creación 
+    created_at = db.Column(db.String(10), default=today_str)
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "email": self.email,
+            "created_at": self.created_at
+        }
+    

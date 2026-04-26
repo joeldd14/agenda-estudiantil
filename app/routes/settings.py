@@ -1,16 +1,18 @@
 from flask import Blueprint, request, jsonify
 from ..database import db
 from ..models import AppSettings, DayNote, DayFlag
+from flask_jwt_extended import jwt_required, get_jwt_identity
 import json
 
 settings_bp = Blueprint("settings", __name__, url_prefix="/api/settings")
 
 #Función auxiliar que obtiene la configuración o la crea con valores por defecto si no existe todavía
-def get_or_create_settings():
+def get_or_create_settings(user_id):
     settings = AppSettings.query.first()
     if not settings:
         #1ª vez que arranca la app -> creamos configuración por defecto
         settings = AppSettings(
+            user_id = user_id,
             cats_json=json.dumps([
                 {"id": "trabajo", "label": "Trabajo", "color": "#185FA5"},
                 {"id": "personal", "label": "Personal", "color": "#0F6E56"},
@@ -34,15 +36,19 @@ def get_or_create_settings():
 
 # -- GET /api/settings -------------------------
 @settings_bp.route("/", methods=["GET"])
+@jwt_required()
 def get_settings():
-    settings = get_or_create_settings()
+    user_id = get_jwt_identity()
+    settings = get_or_create_settings(user_id)
     return jsonify(settings.to_dict())
 
 # -- PUT /api/settings --------------------------
 # Actualiza cualquier campo de la configuración
 @settings_bp.route("/", methods=["PUT"])
+@jwt_required()
 def update_settings():
-    settings = get_or_create_settings()
+    user_id = get_jwt_identity()
+    settings = get_or_create_settings(user_id)
     data = request.get_json()
     
     #json.dumps convierte la lista Python a texto JSON para guardarlo 
@@ -65,22 +71,26 @@ def update_settings():
 # -- GET /api/settings/notes ----------------------------------
 #Devuelve todas las notas de días como diccionario {"2025-04-24": "texto...", "2025-04-25": "otro texto..."}
 @settings_bp.route("/notes", methods=["GET"])
+@jwt_required()
 def get_notes():
-    notes = DayNote.query.all()
+    user_id = get_jwt_identity()
+    notes = DayNote.query.filter_by(user_id=user_id).all()
     return jsonify({note.date:note.text for note in notes})
 
 # -- PUT /api/settings/notes/<date> --------------------------
 # Guarda o actualiza la nota de un día concreto
 @settings_bp.route("/notes/<date>", methods=["PUT"])
+@jwt_required()
 def save_note(date):
+    user_id = get_jwt_identity()
     data = request.get_json()
     content = data.get("content", "")
     
-    existing = DayNote.query.filter_by(date=date).first()
+    existing = DayNote.query.filter_by(date=date, user_id=user_id).first()
     if existing:
         existing.content = content
     else:
-        note = DayNote(date=date, content=content)
+        note = DayNote(user_id=user_id, date=date, content=content)
         db.session.add(note)
     
     db.session.commit()
@@ -89,8 +99,10 @@ def save_note(date):
 # -- GET /api/settings/flags ----------------------------------
 # Devuelve festivos e importantes como dos diccionarios separados
 @settings_bp.route("/flags", methods=["GET"])
+@jwt_required()
 def get_flags():
-    flags = DayFlag.query.all()
+    user_id = get_jwt_identity()
+    flags = DayFlag.query.filter_by(user_id=user_id).all()
     important = {}
     holidays = {}
     for f in flags:
@@ -103,15 +115,18 @@ def get_flags():
 # -- PUT /api/settings/flags/<date> --------------------------
 # Actualiza los flags de un día concreto 
 @settings_bp.route("/flags/<date>", methods=["PUT"])
+@jwt_required()
 def save_flag(date):
+    user_id = get_jwt_identity()
     data = request.get_json()
     
-    existing = DayFlag.query.filter_by(date=date).first()
+    existing = DayFlag.query.filter_by(date=date, user_id=user_id).first()
     if existing:
         existing.is_important = data.get("isImportant", existing.is_important)
         existing.is_holiday = data.get("isHoliday", existing.is_holiday)
     else:
         flag = DayFlag(
+            user_id=user_id,
             date=date,
             is_important = data.get("isImportant", False),
             is_holiday = data.get("isHoliday", False),

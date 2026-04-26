@@ -1,24 +1,30 @@
 from flask import Blueprint, request, jsonify
 from ..database import db
 from ..models import Exam, ExamGrade
+from flask_jwt_extended import jwt_required, get_jwt_identity
 
 exams_bp = Blueprint("exams", __name__, url_prefix="/api/exams")
 
 # -- GET /api/exams --------------------------
 @exams_bp.route("/", methods=["GET"])
+@jwt_required()
 def get_exams():
-    exams = Exam.query.all()
+    user_id = get_jwt_identity()
+    exams = Exam.query.filter_by(user_id=user_id).all()
     return jsonify([e.to_dict() for e in exams])
 
 # -- POST /api/exams -------------------------
 @exams_bp.route("/", methods=["POST"])
+@jwt_required()
 def create_exam():
+    user_id = get_jwt_identity()
     data = request.get_json()
     
     if not data or not data.get("subject") or not data.get("date"):
         return jsonify({"error": "La asignatura y la fecha son obligatorias"}), 400
     
     exam = Exam(
+        user_id=user_id,
         subject=data.get("subject"),
         date=data.get("date"),
         type=data.get("type"),
@@ -49,8 +55,10 @@ def create_exam():
 
 # -- PUT /api/exams/<id> -------------------------
 @exams_bp.route("/<int:exam_id>", methods=["PUT"])
+@jwt_required()
 def update_exam(exam_id):
-    exam = Exam.query.get_or_404(exam_id)
+    user_id = get_jwt_identity()
+    exam = Exam.query.filter_by(id=exam_id, user_id=user_id).first_or_404()
     data = request.get_json()
 
     if "subject" in data:       exam.subject = data["subject"]
@@ -81,8 +89,10 @@ def update_exam(exam_id):
 
 # -- DELETE /api/exams/<id> -------------------------
 @exams_bp.route("/<int:exam_id>", methods=["DELETE"])
+@jwt_required()
 def delete_exam(exam_id):
-    exam = Exam.query.get_or_404(exam_id)
+    user_id = get_jwt_identity()
+    exam = Exam.query.filter_by(id=exam_id, user_id=user_id).first_or_404()
     db.session.delete(exam)
     db.session.commit()
     return jsonify({"message": "Examen eliminado correctamente"})
