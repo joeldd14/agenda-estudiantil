@@ -11,10 +11,9 @@ def create_app():
     #__name__ le dice a Flask dónde está la app para encotnrar ficheros estáticos y templates
     app = Flask(__name__)
     
-    #Configuración de la BASE DE DATOS
-    #SQLite guarda todo en un fichero .db dentro de /instance 
-    # /// significa "ruta relativa al proyecto"
-    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///agenda.db"
+    #Configuración de la BASE DE DATOS (en local usa SQLite y en producción usa PostgreSQL)
+    database_url = os.getenv("DATABASE_URL", "sqlite:///agenda.db")
+    app.config["SQLALCHEMY_DATABASE_URI"] = database_url
     #Desactiva un sistema de seguimiento de cambios de SQLAlchemy que consume memoria innecesariamente
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     
